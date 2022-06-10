@@ -1,8 +1,13 @@
 
-def bar(mw_label='td', Nskip=20):
+def bar(mw_label='td', Nskip=20, test=False):
     """Bar disk scripts"""
     
-    for i in range(1):
+    if test:
+        Ntot = 1
+    else:
+        Ntot = Nskip
+    
+    for i in range(Ntot):
         job_name = 'bar_{:s}_{:d}.{:d}'.format(mw_label, Nskip, i)
         sbatch_text = """#!/bin/bash
 
