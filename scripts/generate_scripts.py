@@ -30,7 +30,7 @@ def bar(mw_label='td', Nskip=20, test=False):
 ## /SBATCH -o slurm/slurm.%N.%j.out # STDOUT
 ## /SBATCH -e slurm/slurm.%N.%j.err # STDERR
 
-srun python run_bar.py \"{:s}\" {:d} {:d}
+srun /home/abonaca/local/bin/python run_bar.py \"{:s}\" {:d} {:d}
 """.format(job_name, mw_label, Nskip, i)
         
         print(sbatch_text)
