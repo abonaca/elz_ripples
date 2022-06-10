@@ -27,10 +27,10 @@ def bar(mw_label='td', Nskip=20, test=False):
 
 
 ## /SBATCH -p general # partition (queue)
-## /SBATCH -o slurm.%N.%j.out # STDOUT
-## /SBATCH -e slurm.%N.%j.err # STDERR
+## /SBATCH -o slurm/slurm.%N.%j.out # STDOUT
+## /SBATCH -e slurm/slurm.%N.%j.err # STDERR
 
-srun python run_bar \"{:s}\" {:d} {:d}
+srun python run_bar.py \"{:s}\" {:d} {:d}
 """.format(job_name, mw_label, Nskip, i)
         
         print(sbatch_text)
