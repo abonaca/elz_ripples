@@ -1005,13 +1005,13 @@ def combine_skips():
     seed = 3928
     mw_label = 'td'
     
-    #iskip = 0
-    #Nskip = 20
-    #Nrand = 50000
-    #mw_label = 'td'
-    #m = 1e10*u.Msun
-    #omega = 41*u.km/u.s/u.kpc
-    #seed = 3928
+    iskip = 0
+    Nskip = 20
+    Nrand = 50000
+    mw_label = 'halo'
+    m = 1e10*u.Msun
+    omega = 41*u.km/u.s/u.kpc
+    seed = 3928
     
     # number of particles
     if mw_label=='halo':
@@ -1023,11 +1023,11 @@ def combine_skips():
     
     # read first part of HDF5 orbits
     i = 0
-    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip, i)
-    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    #root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip, i)
+    #fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
     
-    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, iskip)
-    #fname = '../data/bar_{:s}.h5'.format(root)
+    root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, iskip)
+    fname = '../data/bar_{:s}.h5'.format(root)
     
     f = h5py.File(fname, 'r')
     
@@ -1035,24 +1035,24 @@ def combine_skips():
     #root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
     #fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
     
-    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
-    #fname = '../data/bar_{:s}.h5'.format(root)
-    #if os.path.exists(fname):
-        #os.remove(fname)
-    #fout = h5py.File(fname, 'w')
+    root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/bar_{:s}.h5'.format(root)
+    if os.path.exists(fname):
+        os.remove(fname)
+    fout = h5py.File(fname, 'w')
     
-    ## create frame group
-    #fout.create_group('frame')
-    #f['/frame'].copy(f['/frame'], fout['/frame'])
+    # create frame group
+    fout.create_group('frame')
+    f['/frame'].copy(f['/frame'], fout['/frame'])
     
-    ## create potential and time datasets (same)
-    #for k in ['potential', 'time']:
-        #fout[k] = f[k][()]
+    # create potential and time datasets (same)
+    for k in ['potential', 'time']:
+        fout[k] = f[k][()]
         
-    ## create position and velocity datasets (to be concatenated)
-    #ndim, nsnap, _ = np.shape(f['pos'])
-    #for k in ['pos', 'vel']:
-        #fout.create_dataset(k, (ndim, nsnap, Ntot), dtype='<f8')
+    # create position and velocity datasets (to be concatenated)
+    ndim, nsnap, _ = np.shape(f['pos'])
+    for k in ['pos', 'vel']:
+        fout.create_dataset(k, (ndim, nsnap, Ntot), dtype='<f8')
     
     f.close()
     
@@ -1061,23 +1061,23 @@ def combine_skips():
     icurr = 0
     ioff = 0
     for i in range(Nskip):
-        root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip, i)
-        fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
-        #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, iskip)
-        #fname = '../data/bar_{:s}.h5'.format(root)
+        #root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip, i)
+        #fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+        root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, i)
+        fname = '../data/bar_{:s}.h5'.format(root)
         
         f = h5py.File(fname, 'r')
         Npart = np.shape(f['pos'])[-1] - ioff
-        print(fname, f['pos'][0,0,1], Npart)
+        #print(fname, f['pos'][0,0,1], Npart)
         
-        #for k in ['pos', 'vel']:
-            #fout[k][:,:,icurr:icurr+Npart] = f[k][:,:,ioff:]
+        for k in ['pos', 'vel']:
+            fout[k][:,:,icurr:icurr+Npart] = f[k][:,:,ioff:]
         
         ioff = 1
         icurr += Npart
         f.close()
     
-    #fout.close()
+    fout.close()
 
 
 def diagnose_elz():
@@ -1097,7 +1097,7 @@ def diagnose_elz():
     iskip = 0
     Nskip = 20
     Nrand = 50000
-    mw_label = 'td'
+    mw_label = 'halo'
     m = 1e10*u.Msun
     omega = 41*u.km/u.s/u.kpc
     root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
@@ -1124,7 +1124,7 @@ def diagnose_elz():
     
     plt.sca(ax[0])
     #plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=1, mew=0, alpha=0.4)
-    plt.plot(lz_init, e_init, 'ko', ms=2, mew=0, alpha=0.1)
+    plt.plot(lz_init, e_init, 'ko', ms=1, mew=0, alpha=0.1)
     
     plt.xlim(-8,2)
     plt.ylim(-0.18, -0.02)
@@ -1133,7 +1133,7 @@ def diagnose_elz():
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
     plt.sca(ax[1])
-    plt.plot(lz_fin, e_fin, 'ko', ms=2, mew=0, alpha=0.1)
+    plt.plot(lz_fin, e_fin, 'ko', ms=1, mew=0, alpha=0.1)
     
     #plt.xlim(-2,2)
     #plt.ylim(-0.18,-0.08)
@@ -1159,7 +1159,7 @@ def diagnose_ehist():
     iskip = 0
     Nskip = 20
     Nrand = 50000
-    mw_label = 'td'
+    mw_label = 'halo'
     m = 1e10*u.Msun
     omega = 41*u.km/u.s/u.kpc
     root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
@@ -1214,8 +1214,8 @@ def diagnose_ehist():
     
     plt.sca(ax[0])
     plt.hist(e_init.value, bins=bins, histtype='step', density=True, color='0.7', label='initial')
-    #plt.hist(e_fin.value, bins=bins, histtype='step', density=True, color='k', label='final')
-    #plt.hist(t['E_tot_pot1'], bins=bins_fine, histtype='step', density=True, color='r', label='H3 giants')
+    plt.hist(e_fin.value, bins=bins, histtype='step', density=True, color='k', label='final')
+    plt.hist(t['E_tot_pot1'], bins=bins, histtype='step', density=True, color='r', label='H3 giants')
     
     plt.legend(loc=2)
     plt.ylabel('Density')
@@ -1223,7 +1223,8 @@ def diagnose_ehist():
     plt.sca(ax[1])
     
     plt.hist(e_fin.value[ind_pro], bins=bins, histtype='step', density=True, color='tab:red', label='prograde')
-    plt.hist(e_fin.value[ind_retro], bins=bins, histtype='step', density=True, color='tab:blue', label='retrograde')
+    if mw_label=='halo':
+        plt.hist(e_fin.value[ind_retro], bins=bins, histtype='step', density=True, color='tab:blue', label='retrograde')
     
     #sigma_etot = np.median(t['E_tot_pot1_err']) * fs
     #kde = gaussian_kde(t['E_tot_pot1'], bw_method=sigma_etot)
@@ -1245,6 +1246,80 @@ def diagnose_ehist():
     plt.savefig('../plots/ehist_{:s}.png'.format(root))
 
     f.close()
+
+
+def boot_bar_ehist():
+    """"""
+    
+    Nskip = 20
+    Nrand = 50000
+    mw_label = 'halo'
+    m = 1e10*u.Msun
+    omega = 41*u.km/u.s/u.kpc
+    root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/bar_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    cgal = coord.Galactocentric(x=f['pos'][0,-1,:]*u.kpc, y=f['pos'][1,-1,:]*u.kpc, z=f['pos'][2,-1,:]*u.kpc, v_x=f['vel'][0,-1,:]*u.kpc/u.Myr, v_y=f['vel'][1,-1,:]*u.kpc/u.Myr, v_z=f['vel'][2,-1,:]*u.kpc/u.Myr)
+    
+    # initial
+    e_fin = orbit.energy()[-1]
+    lz_fin = orbit.angular_momentum()[2][-1]
+    
+    snr = 5
+    t = Table.read('../data/rcat_giants.fits')
+    ind = t['SNR']>snr
+    t = t[ind]
+    N = len(t)
+    
+    if mw_label=='td':
+        ind = (t['circLz_pot1']>0.3) & (t['Lz']<0)
+    else:
+        ind = (t['eccen_pot1']>0.7) & (t['Lz']<0.)
+    
+    # randomly draw 6D positions
+    Nboot = 1000
+    Ndim = 6
+    seed = 1248
+    np.random.seed(seed)
+    offsets = np.random.randn(N,Nboot,Ndim)
+    
+    ra = (t['GAIAEDR3_RA'][:,np.newaxis] + offsets[:,:,0] * t['GAIAEDR3_RA_ERROR'][:,np.newaxis]) * u.deg
+    dec = (t['GAIAEDR3_DEC'][:,np.newaxis] + offsets[:,:,1] * t['GAIAEDR3_DEC_ERROR'][:,np.newaxis]) * u.deg
+    dist = (t['dist_adpt'][:,np.newaxis] + offsets[:,:,2] * t['dist_adpt_err'][:,np.newaxis]) * u.kpc
+    dist[dist<0*u.kpc] = 0*u.kpc
+    pmra = (t['GAIAEDR3_PMRA'][:,np.newaxis] + offsets[:,:,3] * t['GAIAEDR3_PMRA_ERROR'][:,np.newaxis]) * u.mas/u.yr
+    pmdec = (t['GAIAEDR3_PMDEC'][:,np.newaxis] + offsets[:,:,4] * t['GAIAEDR3_PMDEC_ERROR'][:,np.newaxis]) * u.mas/u.yr
+    vr = (t['Vrad'][:,np.newaxis] + offsets[:,:,5] * t['Vrad_err'][:,np.newaxis]) * u.km/u.s
+    
+    # calculate orbital properties
+    c = coord.SkyCoord(ra=ra, dec=dec, distance=dist, pm_ra_cosdec=pmra, pm_dec=pmdec, radial_velocity=vr, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    
+    etot = orbit.energy()[0].reshape(N,-1)
+    lz = orbit.angular_momentum()[2][0].reshape(N,-1)
+    
+    ebins = np.linspace(-0.18,-0.05,150)
+    
+    # plotting
+    color_disk = mpl.cm.Reds(0.5)
+    #color_halo = mpl.cm.Blues((i+1)/Nsnr)
+    
+    plt.close()
+    plt.figure(figsize=(12,6))
+    
+    plt.hist(etot[ind].value.flatten(), bins=ebins, density=True, histtype='step', color=color_disk, label='H3 S/N={:d}'.format(snr))
+    plt.hist(e_fin.value, bins=ebins, histtype='step', density=True, color='k', label='Bar model')
+    
+    plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    plt.ylabel('Density')
+    plt.text(0.98,0.95, 'Halo\n(ecc>0.7) & ($L_Z$<0)', va='top', ha='right', transform=plt.gca().transAxes, fontsize='small')
+    plt.legend(fontsize='small', bbox_to_anchor=(0.99,0.8), loc=1)
+    
+    plt.tight_layout()
+
 
 def ehist_distance_halo():
     """"""
