@@ -32,234 +32,102 @@ coord.galactocentric_frame_defaults.set('v4.0')
 gc_frame = coord.Galactocentric()
 
 
-
-def initialize_disk(graph=False, gala=False, logspace=False, Nr=20, const_arc=True, sigma_z=0*u.kpc, sigma_vz=0*u.km/u.s, verbose=True):
-    """Initial positions and velocities of stars in a uniform, circular, thin disk"""
+def initialize_idisk(ret=True, graph=False, Ntot=1000, Nr=20, seed=193, sigma_z=0*u.kpc, sigma_vz=0*u.km/u.s, verbose=False):
+    """Initial positions and velocities of stars in an idealized disk: uniform, circular, and thin"""
     
-    if logspace:
-        radii = np.logspace(0.7,1.5,Nr) * u.kpc
-        radii = np.logspace(0.7,1.6,Nr) * u.kpc
-        radii = np.logspace(0.6,1.6,Nr) * u.kpc
-        radii = np.logspace(np.log10(2),np.log10(50),Nr) * u.kpc
-    else:
-        radii = np.linspace(5,30,Nr) * u.kpc
-        radii = np.linspace(4,40,Nr) * u.kpc
-        radii = np.linspace(2,50,Nr) * u.kpc
-    
-    circumference = 2*np.pi*radii
-    Nr = np.size(radii)
-
-    if const_arc:
-        arc = np.ones(Nr) * 1*u.kpc
-        
-        #Nt = np.int64(np.ceil(circumference/arc).decompose().value)
-        Nt = np.int64((circumference/arc).decompose().value)
-    else:
-        #Nt = np.ones(Nr, dtype=int) * 30
+    # ensure sufficient number of stars per radius
+    if Ntot<Nr*20:
         Ntot = Nr * 20
-        Ntmin = 15
-        #p = scipy.stats.norm.pdf(radii.value, loc=10, scale=3)
-        p = scipy.stats.norm.pdf(radii.value, loc=11, scale=6)
-        Nt = np.int64(Ntot * p / np.sum(p))
-        ind = Nt<Ntmin
-        Nt[ind] = Ntmin
-        
-        arc = circumference / Nt
+    
+    # place discrete radii
+    radii = np.logspace(np.log10(2),np.log10(50),Nr) * u.kpc
+    
+    # number of particles per radial bin
+    Ntmin = 15
+    p = scipy.stats.norm.pdf(radii.value, loc=12, scale=8)
+    #p = scipy.stats.norm.logpdf(np.log10(radii.value), loc=np.log10(11), scale=6)
+    Nt = np.int64(Ntot * p / np.sum(p))
+    ind = Nt<Ntmin
+    Nt[ind] = Ntmin
+    
+    # size of an arc
+    circumference = 2*np.pi*radii
+    arc = circumference / Nt
     
     N = np.sum(Nt)
-    np.random.seed(421)
+    np.random.seed(seed)
     if verbose:
         print(N, Ntot)
     
-    x0 = np.zeros(N) * u.kpc
-    y0 = np.zeros(N) * u.kpc
-    z0 = np.zeros(N) * u.kpc
-    z0 = np.random.randn(N) * sigma_z
+    x = np.zeros(N) * u.kpc
+    y = np.zeros(N) * u.kpc
+    z = np.zeros(N) * u.kpc
+    z = np.random.randn(N) * sigma_z
     
-    vx0 = np.zeros(N) * u.km/u.s
-    vy0 = np.zeros(N) * u.km/u.s
-    vz0 = np.zeros(N) * u.km/u.s
-    vz0 = np.random.randn(N) * sigma_vz
+    vx = np.zeros(N) * u.km/u.s
+    vy = np.zeros(N) * u.km/u.s
+    vz = np.zeros(N) * u.km/u.s
+    vz = np.random.randn(N) * sigma_vz
     
-    if gala:
-        q = np.array([radii.value, np.zeros(Nr), np.zeros(Nr)]) * u.kpc
-        vnorm = -1*ham.potential.circular_velocity(q)
-    else:
-        vnorm = np.ones(Nr) * (-200*u.km/u.s)
-    
+    q = np.array([radii.value, np.zeros(Nr), np.zeros(Nr)]) * u.kpc
+    vnorm = -1*ham.potential.circular_velocity(q)
+
     k = 0
     for i in range(Nr):
         for j in range(Nt[i]):
             theta = j * (arc[i]/radii[i]).decompose().value * u.radian
             
-            x0[k] = radii[i] * np.cos(theta)
-            y0[k] = radii[i] * np.sin(theta)
+            x[k] = radii[i] * np.cos(theta)
+            y[k] = radii[i] * np.sin(theta)
             
-            vx0[k] = vnorm[i] * (-np.sin(theta))
-            vy0[k] = vnorm[i] * np.cos(theta)
+            vx[k] = vnorm[i] * (-np.sin(theta))
+            vy[k] = vnorm[i] * np.cos(theta)
             
             k += 1
     
-    ic = [x0, y0, z0, vx0, vy0, vz0]
-    
-    if graph:
-        plt.close()
-        plt.plot(x0, y0, 'ko')
-        
-        plt.gca().set_aspect('equal')
-        plt.tight_layout()
-    
-    return ic
-
-def init_energy():
-    """"""
-    
-    ic_list = initialize_disk(gala=True, Nr=200, logspace=True, const_arc=False)
-    c = coord.Galactocentric(x=ic_list[0], y=ic_list[1], z=ic_list[2], v_x=ic_list[3], v_y=ic_list[4], v_z=ic_list[5])
+    c = coord.Galactocentric(x=x, y=y, z=z, v_x=vx, v_y=vy, v_z=vz)
     w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
-    
     orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
-    print(np.shape(orbit))
-    
-    energy = orbit.energy()
-    
-    t = Table.read('../data/rcat_giants.fits')
-    ind = (t['SNR']>3) & (t['Lz']<0) & (t['circLz_pot1']>0.3)
-    t = t[ind]
-    
-    plt.close()
-    plt.figure()
-    
-    plt.hist(t['E_tot_pot1'], bins=100, histtype='step', color='k', label='H3 giants', density=True, alpha=0.3)
-    
-    plt.hist(energy.value[0,:], bins=100, histtype='step', color='k', label='Initial', density=True)
-    plt.hist(energy.value[-1,:], bins=100, histtype='step', color='r', label='Final', density=True)
-    
-    plt.tight_layout()
-
-def test_disk():
-    """"""
-    Nr = 200
-    const_arc = False
-    logspace = True
-    sigma_z = 0*u.kpc
-    sigma_vz = 0*u.km/u.s
-    
-    ic_list = initialize_disk(gala=True, Nr=Nr, const_arc=const_arc, logspace=logspace, sigma_z=sigma_z, sigma_vz=sigma_vz)
-    c = coord.Galactocentric(x=ic_list[0], y=ic_list[1], z=ic_list[2], v_x=ic_list[3], v_y=ic_list[4], v_z=ic_list[5])
-    
-    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
-    orbit = ham.integrate_orbit(w0, dt=1*u.Myr, n_steps=1000)
-    energy = orbit.energy()
-    
-    rbins = np.linspace(2,50,100)
-    rbins = np.logspace(np.log10(2),np.log10(50),100)
-    
-    
-    
-    plt.close()
-    fig,ax = plt.subplots(2,1, figsize=(10,10))
-    
-    plt.sca(ax[0])
-    plt.hist(orbit.spherical.distance[0].value, bins=rbins, histtype='step')
-    plt.hist(orbit.spherical.distance[-1].value, bins=rbins, histtype='step')
-    
-    plt.sca(ax[1])
-    plt.hist(energy[0].value, bins=50, histtype='step')
-    plt.hist(energy[-1].value, bins=50, histtype='step')
-    
-    #plt.gca().set_yscale('log')
-    plt.tight_layout()
-
-
-def initialize_halo_ideal(graph=False, Nr=20):
-    """Initial positions and velocities for GSE-like stars on radial orbits on concentric radii between 5 and 30kpc"""
-    
-    #radii = np.array([5,10,30]) * u.kpc
-    radii = np.linspace(7,35,Nr) * u.kpc
-    radii = np.logspace(np.log10(7),np.log10(35),Nr) * u.kpc
-    Nr = len(radii)
-    
-    Ntheta = 4
-    Nphi = 2*Ntheta
-    
-    th0 = 90 - 90/(Ntheta+1)
-    th1 = -90 + 90/(Ntheta+1)
-    theta = np.linspace(th0, th1, Ntheta)*u.deg
-    
-    phi0 = 0 + 180/(Nphi+1)
-    phi1 =360 - 180/(Nphi+1)
-    phi = np.linspace(phi0, phi1, Nphi)*u.deg
-    
-    q = np.array([radii.value, np.zeros(Nr), np.zeros(Nr)]) * u.kpc
-    vnorm = -1*ham.potential.circular_velocity(q)
-    
-    N = Nr*Ntheta*Nphi
-    
-    x0 = np.zeros(N) * u.kpc
-    y0 = np.zeros(N) * u.kpc
-    z0 = np.zeros(N) * u.kpc
-    
-    vx0 = np.zeros(N) * u.km/u.s
-    vy0 = np.zeros(N) * u.km/u.s
-    vz0 = np.zeros(N) * u.km/u.s
-    
-    r0 = 5*u.kpc
-    l = 0
-    for i in range(Nr):
-        for j in range(Ntheta):
-            for k in range(Nphi):
-                x0[l] = radii[i] * np.cos(theta[j]) * np.cos(phi[k])
-                y0[l] = radii[i] * np.cos(theta[j]) * np.sin(phi[k])
-                z0[l] = radii[i] * np.sin(theta[j])
-                
-                vx0[l] = vnorm[i] * np.cos(theta[j]) * np.cos(phi[k]) * 0.8 * (r0/radii[i]).decompose()
-                vy0[l] = vnorm[i] * np.cos(theta[j]) * np.sin(phi[k]) * 0.7 * (r0/radii[i]).decompose()
-                vz0[l] = vnorm[i] * np.sin(theta[j]) * 0.6 * (r0/radii[i]).decompose()
-                
-                l += 1
-    
-    ic = [x0, y0, z0, vx0, vy0, vz0]
-    
-    if graph:
-        plt.close()
-        fig, ax = plt.subplots(1,2,figsize=(12,6))
-        
-        plt.sca(ax[0])
-        plt.plot(x0, y0, 'k.')
-        
-        plt.sca(ax[1])
-        plt.plot(x0, z0, 'k.')
-        
-        plt.tight_layout()
-    
-    return ic
-
-def test_halo_ideal():
-    """"""
-    ic_list = initialize_halo(Nr=400)
-    c = coord.Galactocentric(x=ic_list[0], y=ic_list[1], z=ic_list[2], v_x=ic_list[3], v_y=ic_list[4], v_z=ic_list[5])
-    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
-    
-    print(np.shape(w0))
-    
-    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
-    
-    energy = orbit.energy()[0]
+    etot = orbit.energy()[0].value
     lz = orbit.angular_momentum()[2][0]
     
-    plt.close()
-    fig, ax = plt.subplots(1,2,figsize=(10,5))
+    if graph:
+        print(np.sum((etot>-0.16) & (etot<-0.06)))
+        print(np.sum(etot<0))
+        
+        t = Table.read('../data/rcat_giants.fits')
+        ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
+        ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>5) # & (t['FeH']<-1)
+        t = t[ind_disk]
+        
+        ebins = np.linspace(-0.20,-0.02,200)
+        
+        plt.close()
+        fig, ax = plt.subplots(1,2,figsize=(10,5))
+        
+        plt.sca(ax[0])
+        plt.plot(lz, etot, 'k.', ms=1, alpha=0.1)
+        
+        plt.xlim(-8,2)
+        plt.ylim(-0.2, -0.02)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
-    plt.sca(ax[0])
-    #plt.plot(lz, energy, 'k.')
-    plt.scatter(lz.value, energy.value, c=orbit.spherical.distance[0].value)
-    #plt.hist(orbit.spherical.distance[0].value)
+        plt.sca(ax[1])
+        plt.hist(etot, bins=ebins, density=True, label='Model')
+        plt.hist(t['E_tot_pot1'], bins=ebins, density=True, histtype='step', label='H3', lw=2)
+        
+        plt.legend(fontsize='small')
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
     
-    plt.sca(ax[1])
-    plt.hist(energy.value, bins=100)
-    
-    plt.tight_layout()
+        plt.tight_layout()
+        plt.savefig('../plots/initialize_idisk_phase.png')
+        
+    if ret:
+        ind = etot<0
+        return c[ind]
+
 
 
 def format_gse_dm():
@@ -566,79 +434,6 @@ def initialize_td(Nrand=50000, seed=2924, ret=True, graph=False):
         return c[ind]
 
 
-def initialize_gse(tracer='stars', nskip=1, iskip=0):
-    """"""
-    
-    #t = Table.read('../data/GSE_DM_0010.fits.gz')
-    t = Table.read('/home/ana/data/gse_{:s}.fits'.format(tracer))
-    t = t[iskip::nskip]
-    t.pprint()
-
-    x0 = t['X'] * u.kpc
-    y0 = t['Y'] * u.kpc
-    z0 = t['Z'] * u.kpc
-    
-    vx0 = t['Vx'] * u.km/u.s
-    vy0 = t['Vy'] * u.km/u.s
-    vz0 = t['Vz'] * u.km/u.s
-    
-    ic_list = [x0, y0, z0, vx0, vy0, vz0]
-    
-    c = coord.Galactocentric(x=ic_list[0], y=ic_list[1], z=ic_list[2], v_x=ic_list[3], v_y=ic_list[4], v_z=ic_list[5])
-    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
-    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
-    energy = orbit.energy()[0]
-    
-    #ind = energy < -0.1*u.kpc**2*u.Myr**-2
-    #ic_list = [x[ind] for x in [x0, y0, z0, vx0, vy0, vz0]]
-    
-    return ic_list
-
-def test_gse(nskip=100, tracer='stars'):
-    """"""
-    
-    ic_list = initialize_gse(nskip=nskip, tracer=tracer)
-    c = coord.Galactocentric(x=ic_list[0], y=ic_list[1], z=ic_list[2], v_x=ic_list[3], v_y=ic_list[4], v_z=ic_list[5])
-    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
-    
-    print(np.shape(w0))
-    
-    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
-    
-    energy = orbit.energy()[0]
-    lz = orbit.angular_momentum()[2][0]
-    
-    ind_pro = lz<0 * u.kpc**2 * u.Myr**-1
-    ind_retro = lz>0 * u.kpc**2 * u.Myr**-1
-    #print(energy)
-    
-    print(np.sum(energy.value<-0.1), np.size(energy))
-    
-    bins = np.linspace(-0.16,-0.06,80)
-    
-    plt.close()
-    fig, ax = plt.subplots(1,2,figsize=(10,5))
-    
-    plt.sca(ax[0])
-    plt.plot(lz, energy, 'k.', ms=1, alpha=0.05)
-    #plt.scatter(lz.value, energy.value, c=orbit.spherical.distance[0].value)
-    #plt.hist(orbit.spherical.distance[0].value)
-    
-    plt.xlim(-6,6)
-    plt.ylim(-0.16, -0.06)
-    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
-    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
-    
-    plt.sca(ax[1])
-    plt.hist(energy.value, bins=bins, color='k', histtype='step', alpha=0.8, density=True)
-    #plt.hist(energy.value[ind_pro], bins=bins, color='r', histtype='step', density=True)
-    #plt.hist(energy.value[ind_retro], bins=bins, color='b', histtype='step', density=True)
-    
-    plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
-    plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
-    
-    plt.tight_layout()
-    plt.savefig('../plots/gse_{:s}_elz_ehist.png'.format(tracer))
 
 ####################
 # Orbit integrations
@@ -893,7 +688,7 @@ def evolve_sgr_gse(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, Nskip=8, iski
     orbit_out.to_hdf5(fout)
     fout.close()
 
-def evolve_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, mw_label='halo', Nrand=50000, seed=3928, Nskip=8, iskip=0, snap_skip=100):
+def evolve_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, mw_label='halo', Nrand=50000, seed=3928, Nskip=8, iskip=0, snap_skip=100, test=False):
     """
     Initialize at apocenter
     d - Sgr heliocentric distance (default 27 kpc, reasonable range: 24-28 kpc, Vasiliev)
@@ -930,11 +725,17 @@ def evolve_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, mw_label='h
     # initialize star particles
     if mw_label=='halo':
         c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='idisk':
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=200, seed=seed)[iskip::Nskip]
     else:
         mw_label = 'td'
         c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
     w1_mw = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
     N = np.size(c.x)
+    
+    if test:
+        print(c.x[0], np.size(c), tapo[-Napo], Nfwd)
+        return 0
     
     # to match the static frame of sgr
     mw_orbit_back = ham.integrate_orbit(w1_mw, dt=-dt, n_steps=0)
@@ -997,25 +798,27 @@ def batch_stars():
 def combine_skips():
     """"""
     # simulation setup
-    d = 21*u.kpc
+    d = 27*u.kpc
     m = 1.4e10*u.Msun
     a = 7*u.kpc
-    Nskip = 10
-    Nrand = 50000
+    Nskip = 8
+    Nrand = 4000
     seed = 3928
-    mw_label = 'td'
+    mw_label = 'idisk'
     
-    iskip = 0
-    Nskip = 20
-    Nrand = 50000
-    mw_label = 'halo'
-    m = 1e10*u.Msun
-    omega = 41*u.km/u.s/u.kpc
-    seed = 3928
+    #iskip = 0
+    #Nskip = 20
+    #Nrand = 50000
+    #mw_label = 'halo'
+    #m = 0.5e10*u.Msun
+    #omega = 41*u.km/u.s/u.kpc
+    #seed = 3928
     
     # number of particles
     if mw_label=='halo':
         c = initialize_halo(Nrand=Nrand, seed=seed, ret=True, graph=False)
+    elif mw_label=='idisk':
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=200, seed=seed)
     else:
         mw_label = 'td'
         c = initialize_td(Nrand=Nrand, seed=seed, ret=True, graph=False)
@@ -1023,20 +826,20 @@ def combine_skips():
     
     # read first part of HDF5 orbits
     i = 0
-    #root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip, i)
-    #fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip, i)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
     
-    root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, iskip)
-    fname = '../data/bar_{:s}.h5'.format(root)
+    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, iskip)
+    #fname = '../data/bar_{:s}.h5'.format(root)
     
     f = h5py.File(fname, 'r')
     
     # create output HDF5 file
-    #root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
-    #fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
     
-    root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
-    fname = '../data/bar_{:s}.h5'.format(root)
+    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    #fname = '../data/bar_{:s}.h5'.format(root)
     if os.path.exists(fname):
         os.remove(fname)
     fout = h5py.File(fname, 'w')
@@ -1051,6 +854,7 @@ def combine_skips():
         
     # create position and velocity datasets (to be concatenated)
     ndim, nsnap, _ = np.shape(f['pos'])
+    #print(np.shape(f['pos']))
     for k in ['pos', 'vel']:
         fout.create_dataset(k, (ndim, nsnap, Ntot), dtype='<f8')
     
@@ -1061,13 +865,14 @@ def combine_skips():
     icurr = 0
     ioff = 0
     for i in range(Nskip):
-        #root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip, i)
-        #fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
-        root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, i)
-        fname = '../data/bar_{:s}.h5'.format(root)
+        root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip, i)
+        fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+        #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, i)
+        #fname = '../data/bar_{:s}.h5'.format(root)
         
         f = h5py.File(fname, 'r')
         Npart = np.shape(f['pos'])[-1] - ioff
+        #print(np.shape(f['pos']))
         #print(fname, f['pos'][0,0,1], Npart)
         
         for k in ['pos', 'vel']:
@@ -1087,21 +892,21 @@ def diagnose_elz():
     d = 27*u.kpc
     m = 1.4e10*u.Msun
     a = 7*u.kpc
-    Nskip = 10
-    Nrand = 50000
-    mw_label = 'td'
+    Nskip = 8
+    Nrand = 4000
+    mw_label = 'idisk'
     
     root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
     
-    iskip = 0
-    Nskip = 20
-    Nrand = 50000
-    mw_label = 'halo'
-    m = 1e10*u.Msun
-    omega = 41*u.km/u.s/u.kpc
-    root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
-    fname = '../data/bar_{:s}.h5'.format(root)
+    #iskip = 0
+    #Nskip = 8
+    #Nrand = 4000
+    #mw_label = 'idisk'
+    #m = 1e10*u.Msun
+    #omega = 41*u.km/u.s/u.kpc
+    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.0'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    #fname = '../data/bar_{:s}.h5'.format(root)
     
     f = h5py.File(fname, 'r')
     orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
@@ -1119,12 +924,20 @@ def diagnose_elz():
     #ind_gse = (t['eccen_pot1']>0.7) & (t['SNR']>5)
     #t = t[ind_gse]
     
+    N = np.size(e_init)
+    if N<10000:
+        ms = 4
+        alpha = 1
+    else:
+        ms = 1
+        alpha = 0.1
+    
     plt.close()
     fig, ax = plt.subplots(1,2,figsize=(12,6), sharex=True, sharey=True)
     
     plt.sca(ax[0])
     #plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=1, mew=0, alpha=0.4)
-    plt.plot(lz_init, e_init, 'ko', ms=1, mew=0, alpha=0.1)
+    plt.plot(lz_init, e_init, 'ko', ms=ms, mew=0, alpha=alpha)
     
     plt.xlim(-8,2)
     plt.ylim(-0.18, -0.02)
@@ -1133,7 +946,7 @@ def diagnose_elz():
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
     plt.sca(ax[1])
-    plt.plot(lz_fin, e_fin, 'ko', ms=1, mew=0, alpha=0.1)
+    plt.plot(lz_fin, e_fin, 'ko', ms=ms, mew=0, alpha=alpha)
     
     #plt.xlim(-2,2)
     #plt.ylim(-0.18,-0.08)
@@ -1146,12 +959,12 @@ def diagnose_ehist():
     """"""
     
     # simulation setup
-    d = 25*u.kpc
+    d = 27*u.kpc
     m = 1.4e10*u.Msun
     a = 7*u.kpc
     Nskip = 10
     Nrand = 50000
-    mw_label = 'halo'
+    mw_label = 'td'
     
     root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
@@ -1160,7 +973,7 @@ def diagnose_ehist():
     Nskip = 20
     Nrand = 50000
     mw_label = 'halo'
-    m = 1e10*u.Msun
+    m = 0.5e10*u.Msun
     omega = 41*u.km/u.s/u.kpc
     root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/bar_{:s}.h5'.format(root)
@@ -1206,6 +1019,7 @@ def diagnose_ehist():
     
     
     bins = np.linspace(-0.2,-0.02,200)
+    bins = np.linspace(-0.16,-0.06,150)
     bins_coarse = np.linspace(-0.2,-0.02,50)
     bins_fine = np.linspace(-0.2,-0.02,200)
     
@@ -1254,7 +1068,7 @@ def boot_bar_ehist():
     Nskip = 20
     Nrand = 50000
     mw_label = 'halo'
-    m = 1e10*u.Msun
+    m = 0.5e10*u.Msun
     omega = 41*u.km/u.s/u.kpc
     root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/bar_{:s}.h5'.format(root)
@@ -1267,7 +1081,7 @@ def boot_bar_ehist():
     e_fin = orbit.energy()[-1]
     lz_fin = orbit.angular_momentum()[2][-1]
     
-    snr = 5
+    snr = 20
     t = Table.read('../data/rcat_giants.fits')
     ind = t['SNR']>snr
     t = t[ind]
@@ -2127,6 +1941,8 @@ def evolve_bar_stars(m=1e10*u.Msun, omega=41*u.km/u.s/u.kpc, T=3*u.Gyr, mw_label
     # initialize star particles
     if mw_label=='halo':
         c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='idisk':
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=200, seed=seed)[iskip::Nskip]
     else:
         mw_label = 'td'
         c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
@@ -2134,7 +1950,7 @@ def evolve_bar_stars(m=1e10*u.Msun, omega=41*u.km/u.s/u.kpc, T=3*u.Gyr, mw_label
     N = np.size(c.x)
     
     if test:
-        print(c.x[0])
+        print(c.x[0], np.size(c))
         return 0
     
     # integrate orbits
