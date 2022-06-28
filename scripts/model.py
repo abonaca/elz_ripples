@@ -1942,7 +1942,7 @@ def evolve_bar_stars(m=1e10*u.Msun, omega=41*u.km/u.s/u.kpc, T=3*u.Gyr, mw_label
     if mw_label=='halo':
         c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
     elif mw_label=='idisk':
-        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=200, seed=seed)[iskip::Nskip]
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)[iskip::Nskip]
     else:
         mw_label = 'td'
         c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
