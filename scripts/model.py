@@ -779,8 +779,8 @@ def batch_run():
 def batch_stars():
     """"""
     Nskip = 8
-    distances = np.array([27,])
-    masses = np.array([1.4,])*1e10
+    distances = np.array([26.5,])
+    masses = np.array([2.8,])*1e10
     sizes = np.array([1,])
     comp = ['idisk']
     
@@ -789,7 +789,7 @@ def batch_stars():
             for d in distances:
                 for s in sizes:
                     print(c, m, d, s)
-                    for i in range(1,Nskip):
+                    for i in range(Nskip):
                         t1 = time.time()
                         evolve_sgr_stars(m=m*u.Msun, d=d*u.kpc, a=s*u.kpc, Napo=4, Nrand=40000, mw_label=c, Nskip=Nskip, iskip=i, snap_skip=100)
                         t2 = time.time()
@@ -798,8 +798,8 @@ def batch_stars():
 def combine_skips():
     """"""
     # simulation setup
-    d = 27*u.kpc
-    m = 1.4e10*u.Msun
+    d = 26.5*u.kpc
+    m = 2.8e10*u.Msun
     a = 1*u.kpc
     Nskip = 8
     Nrand = 40000
@@ -872,7 +872,7 @@ def combine_skips():
         
         f = h5py.File(fname, 'r')
         Npart = np.shape(f['pos'])[-1] - ioff
-        print(i, np.shape(f['pos']))
+        #print(i, np.shape(f['pos']))
         #print(fname, f['pos'][0,0,1], Npart)
         
         for k in ['pos', 'vel']:
@@ -890,7 +890,7 @@ def diagnose_elz():
     
     # simulation setup
     d = 27*u.kpc
-    m = 1.4e10*u.Msun
+    m = 2.8e10*u.Msun
     a = 1*u.kpc
     Nskip = 8
     Nrand = 40000
@@ -947,6 +947,7 @@ def diagnose_elz():
     
     plt.sca(ax[1])
     plt.plot(lz_fin, e_fin, 'ko', ms=ms, mew=0, alpha=alpha)
+    plt.plot(lz_fin[0], e_fin[0], 'ro')
     
     #plt.xlim(-2,2)
     #plt.ylim(-0.18,-0.08)
@@ -1060,6 +1061,69 @@ def diagnose_ehist():
     plt.savefig('../plots/ehist_{:s}.png'.format(root))
 
     f.close()
+
+def diagnose_periods():
+    """"""
+    
+    # simulation setup
+    d = 27*u.kpc
+    m = 2.8e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 8
+    Nrand = 40000
+    mw_label = 'idisk'
+    
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    c = coord.Galactocentric(x=orbit.pos.x[-1]*u.kpc, y=orbit.pos.y[-1]*u.kpc, z=orbit.pos.z[-1]*u.kpc, v_x=orbit.vel.d_x[-1]*u.kpc/u.Myr, v_y=orbit.vel.d_y[-1]*u.kpc/u.Myr, v_z=orbit.vel.d_z[-1]*u.kpc/u.Myr)
+    w0 = gd.PhaseSpacePosition(c.cartesian[::5])
+    
+    dt = 1*u.Myr
+    Nback = 3000
+    orbit_fid = ham.integrate_orbit(w0, dt=dt, n_steps=Nback)
+    
+    e_fin = orbit_fid.energy()[-1]
+    lz_fin = orbit_fid.angular_momentum()[2][-1]
+    
+    # skip radial orbits that break period estimation (but keep sgr)
+    lzmin = min(lz_fin[0].value, 1)
+    if d<=26*u.kpc:
+        lzmin = lz_fin[0].value
+    else:
+        lzmin = 1
+    
+    ind_tangential = np.abs(lz_fin)>lzmin*u.kpc**2/u.Myr
+    
+    periods = orbit_fid[:,ind_tangential].estimate_period(radial=True)
+    
+    plt.close()
+    plt.figure(figsize=(12,6))
+    
+    bins = np.logspace(np.log10(75), np.log10(1020), 100)
+    plt.hist(periods.value, bins=bins, histtype='step')
+    
+    for fr in [1, 2/3, 1/2, 2/7, 1/5, 1/8]:
+        plt.axvline(periods.value[0]*fr)
+    
+    plt.gca().set_xscale('log')
+    plt.xlabel('Period [Myr]')
+    plt.ylabel('Number')
+    plt.tight_layout()
+    plt.savefig('../plots/period_{:s}.png'.format(root))
+    
+def aux_ratios():
+    """"""
+    
+    a = np.array([947, 625, 467, 269, 185])
+    print(a/a[0])
+
+
+
 
 
 def boot_bar_ehist():
