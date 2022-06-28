@@ -726,7 +726,7 @@ def evolve_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, mw_label='h
     if mw_label=='halo':
         c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
     elif mw_label=='idisk':
-        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=200, seed=seed)[iskip::Nskip]
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)[iskip::Nskip]
     else:
         mw_label = 'td'
         c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
@@ -778,20 +778,20 @@ def batch_run():
 
 def batch_stars():
     """"""
-    Nskip = 10
-    distances = np.array([24,])
+    Nskip = 8
+    distances = np.array([27,])
     masses = np.array([1.4,])*1e10
-    sizes = np.array([1,13])
-    comp = ['td', 'halo']
+    sizes = np.array([1,])
+    comp = ['idisk']
     
     for c in comp:
         for m in masses:
             for d in distances:
                 for s in sizes:
                     print(c, m, d, s)
-                    for i in range(Nskip):
+                    for i in range(1,Nskip):
                         t1 = time.time()
-                        evolve_sgr_stars(m=m*u.Msun, d=d*u.kpc, a=s*u.kpc, Napo=5, mw_label=c, Nskip=Nskip, iskip=i, snap_skip=100)
+                        evolve_sgr_stars(m=m*u.Msun, d=d*u.kpc, a=s*u.kpc, Napo=4, Nrand=40000, mw_label=c, Nskip=Nskip, iskip=i, snap_skip=100)
                         t2 = time.time()
                         print(i, t2-t1)
 
@@ -800,17 +800,17 @@ def combine_skips():
     # simulation setup
     d = 27*u.kpc
     m = 1.4e10*u.Msun
-    a = 7*u.kpc
+    a = 1*u.kpc
     Nskip = 8
-    Nrand = 4000
+    Nrand = 40000
     seed = 3928
     mw_label = 'idisk'
     
     #iskip = 0
-    #Nskip = 20
-    #Nrand = 50000
-    #mw_label = 'halo'
-    #m = 0.5e10*u.Msun
+    #Nskip = 8
+    #Nrand = 40000
+    #mw_label = 'idisk'
+    #m = 2e10*u.Msun
     #omega = 41*u.km/u.s/u.kpc
     #seed = 3928
     
@@ -818,7 +818,7 @@ def combine_skips():
     if mw_label=='halo':
         c = initialize_halo(Nrand=Nrand, seed=seed, ret=True, graph=False)
     elif mw_label=='idisk':
-        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=200, seed=seed)
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)
     else:
         mw_label = 'td'
         c = initialize_td(Nrand=Nrand, seed=seed, ret=True, graph=False)
@@ -872,7 +872,7 @@ def combine_skips():
         
         f = h5py.File(fname, 'r')
         Npart = np.shape(f['pos'])[-1] - ioff
-        #print(np.shape(f['pos']))
+        print(i, np.shape(f['pos']))
         #print(fname, f['pos'][0,0,1], Npart)
         
         for k in ['pos', 'vel']:
@@ -891,9 +891,9 @@ def diagnose_elz():
     # simulation setup
     d = 27*u.kpc
     m = 1.4e10*u.Msun
-    a = 7*u.kpc
+    a = 1*u.kpc
     Nskip = 8
-    Nrand = 4000
+    Nrand = 40000
     mw_label = 'idisk'
     
     root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
@@ -901,11 +901,11 @@ def diagnose_elz():
     
     #iskip = 0
     #Nskip = 8
-    #Nrand = 4000
+    #Nrand = 40000
     #mw_label = 'idisk'
-    #m = 1e10*u.Msun
+    #m = 2e10*u.Msun
     #omega = 41*u.km/u.s/u.kpc
-    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.0'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
     #fname = '../data/bar_{:s}.h5'.format(root)
     
     f = h5py.File(fname, 'r')
