@@ -21,6 +21,7 @@ import functools
 from scipy.stats import gaussian_kde
 from scipy import ndimage
 from skimage.filters import unsharp_mask
+from scipy.fft import fft, ifft, fftfreq
 
 import time
 import pickle
@@ -231,9 +232,9 @@ def galpy_actions(test=True, graph=True):
         plt.ylim(0,5)
         plt.tight_layout()
 
-def long_orbits(test=True):
+def long_orbits(test=True, tracer='giants'):
     """"""
-    t = Table.read('../data/rcat_giants.fits')
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
     if test:
         t = t[:300]
     
@@ -248,7 +249,7 @@ def long_orbits(test=True):
         orbit = ham.integrate_orbit(w0, dt=1*u.Myr, n_steps=100000)
         
         out = dict(t=orbit.t, w=orbit.w().T)
-        pkl = pickle.dump(out, open('../data/long_orbits/giant.{:05d}.pkl'.format(i), 'wb'))
+        pkl = pickle.dump(out, open('../data/long_orbits/{:s}.{:05d}.pkl'.format(tracer, i), 'wb'))
     t2 = time.time()
     
     tot = (t2 - t1)*u.s
@@ -307,13 +308,13 @@ def get_freq_sgr():
     
     np.save('../data/sgr_freqs', freqs)
 
-def get_freq(i1, i2, verbose=False):
+def get_freq(i1, i2, verbose=False, tracer='giants'):
     """"""
     N = i2 - i1
     freqs = np.zeros((N, 3))
     
     for k in range(N):
-        pkl = pickle.load(open('../data/long_orbits/giant.{:05d}.pkl'.format(k+i1), 'rb'))
+        pkl = pickle.load(open('../data/long_orbits/{:s}.{:05d}.pkl'.format(tracer, k+i1), 'rb'))
         
         t = pkl['t']
         w = pkl['w']
@@ -331,12 +332,13 @@ def get_freq(i1, i2, verbose=False):
         except:
             freqs[k] = np.nan
     
-    np.save('../data/freqs.{:d}.{:d}'.format(i1, i2), freqs)
+    np.save('../data/freqs_{:s}.{:d}.{:d}'.format(tracer, i1, i2), freqs)
 
-def run_freqs_mp(nproc=8, test=True):
+def run_freqs_mp(nproc=8, test=True, tracer='giants'):
     """"""
-    t = Table.read('../data/rcat_giants.fits')
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
     if test:
+        print(len(t))
         t = t[:100]
     
     Ntot = len(t)
@@ -350,7 +352,7 @@ def run_freqs_mp(nproc=8, test=True):
 
     t1 = time.time()
     for i in range(nproc):
-        p = Process(target=get_freq, args=(indices[i], indices[i+1]))
+        p = Process(target=get_freq, args=(indices[i], indices[i+1]), kwargs=dict(tracer=tracer))
         p.start()
         processes.append(p)
 
@@ -400,20 +402,20 @@ def freqs(test=True):
     dt = tot/N
     print('{:f} {:f}'.format(tot.to(u.min), dt))
 
-def store_freqs(save=False, test=False):
+def store_freqs(save=False, test=False, tracer='giants'):
     """"""
     if test:
         Ntot = 100
         save = False
     else:
-        t = Table.read('../data/rcat_giants.fits')
+        t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
         Ntot = len(t)
     
     nproc = 8
     indices = np.linspace(0,Ntot,nproc+1, dtype='int')
     
     for i in range(nproc):
-        d = np.load('../data/freqs.{:d}.{:d}.npy'.format(indices[i], indices[i+1]))
+        d = np.load('../data/freqs_{:s}.{:d}.{:d}.npy'.format(tracer, indices[i], indices[i+1]))
         print(i, np.sum(np.isfinite(d[:,0])), np.shape(d), indices[i+1] - indices[i])
         
         if i==0:
@@ -423,17 +425,17 @@ def store_freqs(save=False, test=False):
     
     #print(dall[:,0], np.sum(np.isfinite(dall[:,0])))
     
-    np.save('../data/freqs_giants', dall)
-    t = Table.read('../data/rcat_giants.fits')
+    np.save('../data/freqs_{:s}'.format(tracer), dall)
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
     
-    trcat = t['orbit_period_pot1'][:100]
+    trcat = t['orbit_period_pot1'][:Ntot]
     tr = 2*np.pi/dall[:,0]
     #print(trcat)
     #print(trcat/np.abs(tr))
     
     plt.close()
     plt.figure()
-    plt.scatter(np.abs(dall[:,0]), np.abs(dall[:,1]), c=np.abs(t['Lz'][:100].value))
+    plt.scatter(np.abs(dall[:,0]), np.abs(dall[:,1]), c=np.abs(t['Lz'][:Ntot].value), s=1)
     
     plt.tight_layout()
 
@@ -442,9 +444,13 @@ def store_freqs(save=False, test=False):
         t['omega_phi'] = dall[:,1] * u.Myr**-1
         t['omega_z'] = dall[:,2] * u.Myr**-1
         
+        t['T_R'] = 2*np.pi * np.abs(dall[:,0])**-1 * u.Myr
+        t['T_phi'] = 2*np.pi * np.abs(dall[:,1])**-1 * u.Myr
+        t['T_z'] = 2*np.pi * np.abs(dall[:,2])**-1 * u.Myr
+        
         
         t.pprint()
-        t.write('../data/rcat_giants.fits', overwrite=True)
+        t.write('../data/rcat_{:s}.fits'.format(tracer), overwrite=True)
 
 
 def elz(snr=3):
@@ -1309,6 +1315,7 @@ def chemistry_pops(snr=10, tracer='giants'):
     plt.tight_layout()
 
 
+
 def rapo_rperi(snr=10, tracer='giants'):
     """"""
     t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
@@ -1327,6 +1334,111 @@ def rapo_rperi(snr=10, tracer='giants'):
         plt.plot(t['Rperi_pot1'][ind], t['Rapo_pot1'][ind], 'k.', ms=1)
     
     plt.tight_layout()
+
+def omega_comparison(snr=10, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
+    ind_gse = (t['eccen_pot1']>0.85)
+    ind_sgr = t['Sgr_FLAG']==1
+    
+    plt.close()
+    fig, ax = plt.subplots(1,1,figsize=(8,8))
+    
+    for e, ind in enumerate([ind_circular, ind_sgr, ind_gse]):
+        plt.plot(np.abs(t['omega_R'][ind].to(u.Gyr**-1)), np.abs(t['omega_z'][ind].to(u.Gyr**-1)), '.', ms=1)
+    
+    plt.tight_layout()
+
+def omegar_histogram(snr=10, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    #print(t.colnames)
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
+    ind_gse = (t['eccen_pot1']>0.85)
+    ind_sgr = t['Sgr_FLAG']==1
+    
+    elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    de = np.abs(elevels[::2] - elevels[1::2])
+    
+    ind_energy = [(t['E_tot_pot1']>elevels[2*x]) & (t['E_tot_pot1']<elevels[2*x+1]) for x in range(Nlevel)]
+    cmaps = [mpl.cm.Reds, mpl.cm.Oranges, mpl.cm.Greens, mpl.cm.Blues, mpl.cm.Purples]
+    
+    bins = np.linspace(2,80,150)
+    
+    plt.close()
+    fig, ax = plt.subplots(3,1,figsize=(10,8), sharex=True)
+    
+    for e, ind in enumerate([ind_circular, ind_sgr, ind_gse]):
+        plt.sca(ax[e])
+        plt.hist(np.abs(t['omega_R'][ind].to(u.Gyr**-1).value), bins=bins, histtype='step')
+        #plt.hist(2*np.pi*((t['orbit_period_pot1'][ind]*u.Myr).to(u.Gyr).value)**-1, bins=bins, histtype='step')
+        
+        #for i, inde in enumerate(ind_energy):
+            #plt.hist(np.abs(t['omega_R'][ind & inde].to(u.Gyr**-1).value), bins=bins, histtype='step', color=cmaps[i](0.5))
+    
+    plt.tight_layout(h_pad=0)
+
+def fft_omegar(snr=10, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) #& (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
+    ind_gse = (t['eccen_pot1']>0.85)
+    ind_sgr = t['Sgr_FLAG']==1
+    
+    labels = ['Disk', 'Disk ripple', 'Sgr', 'GSE']
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    ind_radial = (dlz>1) & (dlz<1.5)
+    
+    omega_bar = (43*u.km/u.s/u.kpc).to(u.Gyr**-1)
+    
+    N = 1000
+    bins = np.linspace(0,150,N)
+    T = bins[1] - bins[0]
+    
+    plt.close()
+    #fig, ax = plt.subplots(3,1,figsize=(10,8), sharex=True)
+    fig, ax = plt.subplots(1,1,figsize=(10,6), sharex=True)
+    
+    for e, ind in enumerate([ind_circular, ind_circular & ind_ripple, ind_sgr, ind_gse]):
+        #plt.sca(ax[e])
+        
+        y, he = np.histogram(np.abs(t['omega_phi'][ind].to(u.Gyr**-1).value), bins=bins)
+        yf = fft(y)
+        xf = fftfreq(N, T)[:N//2]
+        
+        plt.plot(xf, 2.0/N * np.abs(yf[0:N//2]), label=labels[e])
+    
+    for i in range(1,11):
+        plt.axvline(i*omega_bar.value**-1, color='k', ls=':', lw=0.5)
+    
+    print(2*np.pi*0.4)
+    print(2*np.pi*1.5)
+    
+    plt.legend()
+    plt.gca().set_xscale('log')
+    plt.gca().set_yscale('log')
+        
+    plt.tight_layout(h_pad=0)
 
 
 def dlz_z(tracer='giants', snr=10):
