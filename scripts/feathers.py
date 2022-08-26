@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-from astropy.table import Table #, QTable, hstack, vstack
+from astropy.table import Table, vstack #, QTable, hstack, vstack
 import astropy.units as u
 import astropy.coordinates as coord
 from astropy.io import fits
@@ -19,6 +19,8 @@ from galpy.potential import MWPotential2014
 from scipy.optimize import minimize, root
 import functools
 from scipy.stats import gaussian_kde
+from scipy import ndimage
+from skimage.filters import unsharp_mask
 
 import time
 import pickle
@@ -46,6 +48,37 @@ def rcat_giants():
     t['E_tot_pot1'] = (t['E_tot_pot1']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
     
     t.write('../data/rcat_giants.fits', overwrite=True)
+
+def rcat_history(v=1, tracer='giants'):
+    """"""
+    
+    if v==1:
+        fname = 'rcat_V3.0.3.d20201005_MSG.fits'
+    elif v==2:
+        fname = 'rcat_V4.0.3.d20201031_MSG.fits'
+    else:
+        v = 0
+        fname = 'rcat_V4.1.5.d20220422_MSG.fits'
+    
+    t = Table(fits.getdata('/home/ana/data/h3/{:s}'.format(fname)))
+    ind = (t['FLAG']==0) & (t['SNR']>3)
+    if tracer=='giants':
+        ind = ind & (t['logg']<3.5)
+    elif tracer=='msto':
+        ind = ind & (t['logg']<4.3) & (t['logg']>3.8)
+    else:
+        tracer = 'all'
+    t.pprint()
+    t = t[ind]
+    print(len(t), np.size(ind))
+    
+    t['Lx'] = (t['Lx']*u.km/u.s*u.kpc).to(u.kpc**2/u.Myr)
+    t['Ly'] = (t['Ly']*u.km/u.s*u.kpc).to(u.kpc**2/u.Myr)
+    t['Lz'] = (t['Lz']*u.km/u.s*u.kpc).to(u.kpc**2/u.Myr)
+    t['Lperp'] = np.sqrt(t['Lx']**2 + t['Ly']**2)
+    t['E_tot_pot1'] = (t['E_tot_pot1']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
+    
+    t.write('../data/rcat_{:s}_v{:d}.fits'.format(tracer, v), overwrite=True)
 
 def rcat_all():
     """"""
@@ -75,6 +108,38 @@ def rcat_msto():
     t['E_tot_pot1'] = (t['E_tot_pot1']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
     
     t.write('../data/rcat_msto.fits', overwrite=True)
+
+def rcat_gse(tracer='stars', nskip=1, iskip=0):
+    """"""
+    
+    t = Table.read('/home/ana/data/gse_{:s}.fits'.format(tracer))
+    t = t[iskip::nskip]
+
+    x0 = t['X'] * u.kpc
+    y0 = t['Y'] * u.kpc
+    z0 = t['Z'] * u.kpc
+    
+    vx0 = t['Vx'] * u.km/u.s
+    vy0 = t['Vy'] * u.km/u.s
+    vz0 = t['Vz'] * u.km/u.s
+    
+    ic_list = [x0, y0, z0, vx0, vy0, vz0]
+    
+    c = coord.Galactocentric(x=ic_list[0], y=ic_list[1], z=ic_list[2], v_x=ic_list[3], v_y=ic_list[4], v_z=ic_list[5])
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    
+    if tracer=='stars':
+        t.rename_column('Lz', 'Lz_sim')
+    
+    tout = t
+    tout['E_tot_pot1'] = orbit.energy()[0]
+    tout['Lx'] = orbit.angular_momentum()[0][0,:]
+    tout['Ly'] = orbit.angular_momentum()[0][1,:]
+    tout['Lz'] = orbit.angular_momentum()[0][2,:]
+    
+    tout.pprint()
+    tout.write('../data/simcat_{:s}.fits'.format(tracer), overwrite=True)
 
 
 def elz_errors(test=True, graph=True):
@@ -234,15 +299,15 @@ def get_freq_sgr():
         fs = [(wp[:,i] * 1j*wp[:,i+ndim//2]) for i in range(ndim//2)]
         
         try:
-            freqs_, tbl, ix = sf.find_fundamental_frequencies(fs)
-            print(k, freqs_)
-            freqs[k] = freqs_
+            out = sf.find_fundamental_frequencies(fs)
+            print(k, out.fund_freqs)
+            freqs[k] = out.fund_freqs
         except:
             freqs[k] = np.nan
     
     np.save('../data/sgr_freqs', freqs)
 
-def get_freq(i1, i2):
+def get_freq(i1, i2, verbose=False):
     """"""
     N = i2 - i1
     freqs = np.zeros((N, 3))
@@ -260,9 +325,9 @@ def get_freq(i1, i2):
         fs = [(wp[:,i] * 1j*wp[:,i+ndim//2]) for i in range(ndim//2)]
         
         try:
-            freqs_, tbl, ix = sf.find_fundamental_frequencies(fs)
-            print(i1+k, freqs_)
-            freqs[k] = freqs_
+            out = sf.find_fundamental_frequencies(fs)
+            if verbose: print(i1+k, out.fund_freqs)
+            freqs[k] = out.fund_freqs
         except:
             freqs[k] = np.nan
     
@@ -319,8 +384,8 @@ def freqs(test=True):
         fs = [(wp[:,i] * 1j*wp[:,i+ndim//2]) for i in range(ndim//2)]
         
         try:
-            freqs_, tbl, ix = sf.find_fundamental_frequencies(fs)
-            freqs[k] = freqs_
+            out = sf.find_fundamental_frequencies(fs)
+            freqs[k] = out.fund_freqs
         except:
             freqs[k] = np.nan
         
@@ -335,11 +400,15 @@ def freqs(test=True):
     dt = tot/N
     print('{:f} {:f}'.format(tot.to(u.min), dt))
 
-def store_freqs():
+def store_freqs(save=False, test=False):
     """"""
-    t = Table.read('../data/rcat_giants.fits')
+    if test:
+        Ntot = 100
+        save = False
+    else:
+        t = Table.read('../data/rcat_giants.fits')
+        Ntot = len(t)
     
-    Ntot = len(t)
     nproc = 8
     indices = np.linspace(0,Ntot,nproc+1, dtype='int')
     
@@ -352,32 +421,39 @@ def store_freqs():
         else:
             dall = np.vstack([dall,d])
     
-    t['omega_R'] = dall[:,0] * u.Myr**-1
-    t['omega_phi'] = dall[:,1] * u.Myr**-1
-    t['omega_z'] = dall[:,2] * u.Myr**-1
+    #print(dall[:,0], np.sum(np.isfinite(dall[:,0])))
     
-    t.pprint()
-    t.write('../data/rcat_giants.fits', overwrite=True)
+    np.save('../data/freqs_giants', dall)
+    t = Table.read('../data/rcat_giants.fits')
+    
+    trcat = t['orbit_period_pot1'][:100]
+    tr = 2*np.pi/dall[:,0]
+    #print(trcat)
+    #print(trcat/np.abs(tr))
+    
+    plt.close()
+    plt.figure()
+    plt.scatter(np.abs(dall[:,0]), np.abs(dall[:,1]), c=np.abs(t['Lz'][:100].value))
+    
+    plt.tight_layout()
+
+    if save:
+        t['omega_R'] = dall[:,0] * u.Myr**-1
+        t['omega_phi'] = dall[:,1] * u.Myr**-1
+        t['omega_z'] = dall[:,2] * u.Myr**-1
+        
+        
+        t.pprint()
+        t.write('../data/rcat_giants.fits', overwrite=True)
 
 
 def elz(snr=3):
     """"""
     t = Table.read('../data/rcat_giants.fits')
-    ind = (t['SNR']>snr) #& (t['eccen_pot1']>0.7)
+    ind = (t['SNR']>snr) & (t['zmax_pot1']>0) #& (t['eccen_pot1']>0.7)
     t = t[ind]
     print(len(t))
-    
-    ##print(t.colnames)
-    #dates = ['{:s}-{:s}-{:s}T00:00:00'.format(x[1:5], x[5:7], x[7:]) for x in t['dateID']]
-    #tdate = Time(dates, format='isot', scale='utc')
-    #end_date = '2018-06-01'
-    #end_date = '2019-06-01'
-    #end_date = '2020-06-01'
-    #end_date = '2021-06-01'
-    #end_date = '2022-06-01'
-    #ind = tdate<end_date
-    #t = t[ind]
-    print(len(t), np.sum(ind))
+    print(np.nanmedian(t['E_tot_pot1_err']), np.nanmedian(t['Lz_err']), np.nanmedian(t['dist_adpt_err']/t['dist_adpt']))
     
     plt.close()
     plt.figure(figsize=(8,8))
@@ -392,6 +468,179 @@ def elz(snr=3):
     
     plt.tight_layout()
     plt.savefig('../plots/elz_giants_snr.{:d}.png'.format(snr), dpi=300)
+
+def elz_chemistry(snr=10):
+    """"""
+    
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr) #& (t['zmax_pot1']>0) #& (t['eccen_pot1']>0.7)
+    t = t[ind]
+    print(len(t))
+    
+    p_higha = [-0.14,0.18]
+    poly_higha = np.poly1d(p_higha)
+    ind_higha = (t['init_FeH']>-0.75) & (t['init_aFe']>poly_higha(t['init_FeH']))
+    
+    p_lowa = [-0.14,0.15]
+    poly_lowa = np.poly1d(p_lowa)
+    ind_lowa = (t['init_FeH']>-0.45) & (t['init_aFe']<poly_lowa(t['init_FeH']))
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2,figsize=(12,6))
+    
+    plt.sca(ax[0])
+    plt.plot(t['Lz'][ind_higha], t['E_tot_pot1'][ind_higha], 'ko', ms=2, mew=0, alpha=0.3)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.sca(ax[1])
+    plt.plot(t['Lz'][ind_lowa], t['E_tot_pot1'][ind_lowa], 'ko', ms=2, mew=0, alpha=0.3)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+
+def elz_hist(snr=3, tracer='giants', weight=False):
+    """"""
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    N = len(t)
+    print(N)
+    
+    # weights
+    ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err']))
+    sigma_etot = (np.nanmedian(t['E_tot_pot1_err'][ind_finite])*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value
+    sigma_lz = (np.nanmedian(t['Lz_err'][ind_finite])*u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1).value
+    
+    if weight:
+        w = ((t['E_tot_pot1_err']/sigma_etot)**2 + (t['Lz_err']/sigma_lz)**2)**-0.5
+    else:
+        w = np.ones(N)
+    
+    #2D histogram
+    Nbin = 3000
+    be_lz = np.linspace(-6, 6, Nbin)
+    be_etot = np.linspace(-0.18, -0.02, Nbin)
+    
+    h, xe, ye = np.histogram2d(t['Lz'], t['E_tot_pot1'], bins=(be_lz, be_etot), weights=w)
+    h += 0.1
+    
+    detot = be_etot[1] - be_etot[0]
+    dlz = be_lz[1] - be_lz[0]
+    sigma_smooth = (sigma_etot/detot, sigma_lz/dlz)
+    print(sigma_smooth)
+    
+    h_smooth = ndimage.gaussian_filter(h, sigma_smooth)
+    
+    h_sx = ndimage.sobel(h_smooth, axis=0, mode='constant')
+    h_sy = ndimage.sobel(h_smooth, axis=1, mode='constant')
+    h_edge = np.hypot(h_sx, h_sy)
+    
+    # colorbar scaling
+    if tracer=='giants':
+        vmax = 2e-3
+    else:
+        vmax = None
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2,figsize=(14,7), sharex=True, sharey=True)
+    
+    plt.sca(ax[0])
+    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.sca(ax[1])
+    plt.imshow(h_edge.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary', vmax=vmax)
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+    for i in range(2):
+        plt.sca(ax[i])
+        for e in eridge:
+            plt.axhline(e, color='r', lw=0.2)
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_hist_{:s}_w.{:d}.png'.format(tracer, weight))
+
+def elz_unsharp(tracer='giants', snr=3):
+    """"""
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    N = len(t)
+    print(N)
+    
+    # weights
+    ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err']))
+    sigma_etot = (np.nanmedian(t['E_tot_pot1_err'][ind_finite])*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value
+    sigma_lz = (np.nanmedian(t['Lz_err'][ind_finite])*u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1).value
+    
+    #2D histogram
+    Nbin = 1000
+    be_lz = np.linspace(-6, 6, Nbin)
+    be_etot = np.linspace(-0.18, -0.02, Nbin)
+    
+    h, xe, ye = np.histogram2d(t['Lz'], t['E_tot_pot1'], bins=(be_lz, be_etot))
+    h += 0.1
+    
+    ## smooth by observational uncertainties
+    #detot = be_etot[1] - be_etot[0]
+    #dlz = be_lz[1] - be_lz[0]
+    #sigma_smooth = (sigma_etot/detot, sigma_lz/dlz)
+    #print(sigma_smooth)
+    
+    #h = ndimage.gaussian_filter(h, sigma_smooth)
+    
+    
+    hu1 = unsharp_mask(h, radius=1, amount=1)
+    hu5 = unsharp_mask(h, radius=5, amount=1)
+    hu20 = unsharp_mask(h, radius=50, amount=1)
+    
+    plt.close()
+    fig, ax = plt.subplots(2,2,figsize=(12,12), sharex=True, sharey=True)
+    
+    plt.sca(ax[0,0])
+    plt.imshow(h.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.sca(ax[0,1])
+    plt.imshow(hu1.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary')
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    plt.sca(ax[1,0])
+    plt.imshow(hu5.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary')
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.sca(ax[1,1])
+    plt.imshow(hu20.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary')
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    #eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+    #for i in range(2):
+        #for j in range(2):
+            #plt.sca(ax[i][j])
+            #for e in eridge:
+                #plt.axhline(e, color='r', lw=0.2)
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_unsharp_{:s}.png'.format(tracer))
+
 
 def jrlz():
     """"""
@@ -531,6 +780,634 @@ def circularity():
     plt.tight_layout()
 
 
+def disk_ridgeline(snr=3, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    # disk
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0)
+    
+    Nbin = 30
+    wbin = 0.002 * u.kpc**2*u.Myr**-2
+    if tracer=='giants':
+        ebins = np.linspace(-0.16, -0.08, Nbin) * u.kpc**2*u.Myr**-2
+        pmin = 5
+    else:
+        ebins = np.linspace(-0.16, -0.1, Nbin) * u.kpc**2*u.Myr**-2
+        pmin = 4
+    
+    lzmax = np.zeros(Nbin) #* u.kpc**2*u.Myr**-1
+    for i in range(Nbin):
+        ind_bin = (t['E_tot_pot1']>ebins[i] - wbin) & (t['E_tot_pot1']<ebins[i] + wbin)
+        lzmax[i] = np.percentile(t['Lz'][ind_circular & ind_bin], pmin)
+    
+    if tracer=='giants':
+        eridge = np.linspace(-0.16, -0.05, 100)
+        k = 4
+    else:
+        eridge = np.linspace(-0.16, -0.1, 100)
+        k = 4
+    
+    par = np.polyfit(ebins, lzmax, k)
+    poly = np.poly1d(par)
+    lzridge = poly(eridge)
+    
+    np.save('../data/elz_ridgeline_{:s}'.format(tracer), par)
+    
+    # halo
+    ind_eccentric = (t['eccen_pot1']>0.7)
+    
+    lz_envelope = np.zeros((2,Nbin)) #* u.kpc**2*u.Myr**-1
+    for i in range(Nbin):
+        ind_bin = (t['E_tot_pot1']>ebins[i] - wbin) & (t['E_tot_pot1']<ebins[i] + wbin)
+        lz_envelope[:,i] = np.percentile(t['Lz'][ind_eccentric & ind_bin],[30,70])
+    
+    par_prohalo = np.polyfit(ebins, lz_envelope[0], 4)
+    poly_prohalo = np.poly1d(par_prohalo)
+    lz_prohalo = poly_prohalo(eridge)
+
+    par_rethalo = np.polyfit(ebins, lz_envelope[1], 4)
+    poly_rethalo = np.poly1d(par_rethalo)
+    lz_rethalo = poly_rethalo(eridge)
+    
+    np.save('../data/elz_envelope_{:s}'.format(tracer), [par_prohalo, par_rethalo])
+    
+    
+    plt.close()
+    plt.figure(figsize=(8,8))
+    
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
+    #plt.plot(t['Lz'][ind_circular], t['E_tot_pot1'][ind_circular], 'ko', ms=2, mew=0, alpha=0.3)
+    plt.plot(lzmax, ebins, 'ro')
+    plt.plot(lzridge, eridge, 'r-')
+    plt.plot(lzridge+0.3, eridge, 'r--')
+    plt.plot(lzridge+1, eridge, 'r:')
+    
+    plt.plot(lz_prohalo, eridge, 'b-')
+    plt.plot(lz_prohalo-0.3, eridge, 'b:')
+    plt.plot(lz_rethalo, eridge, 'b-')
+    plt.plot(lz_rethalo+0.3, eridge, 'b:')
+
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_ridgeline_{:s}.png'.format(tracer))
+
+def ridge_ehist(snr=3):
+    """"""
+    
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    # Disk
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0)
+    
+    par = np.load('../data/elz_ridgeline.npy')
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    
+    # Halo
+    ind_eccentric = (t['eccen_pot1']>0.7)
+    
+    par_prohalo, par_rethalo = np.load('../data/elz_envelope.npy')
+    #d = np.load('../data/elz_envelope.npy')
+    #print(d)
+    
+    poly_prohalo = np.poly1d(par_prohalo)
+    poly_rethalo = np.poly1d(par_rethalo)
+    
+    ind_radial = (t['Lz'] > poly_prohalo(t['E_tot_pot1'])) & (t['Lz'] < poly_rethalo(t['E_tot_pot1']))
+    ind_prohalo = (t['Lz'] > poly_prohalo(t['E_tot_pot1'])-0.3) & (t['Lz'] < poly_prohalo(t['E_tot_pot1']))
+    ind_rethalo = (t['Lz'] > poly_rethalo(t['E_tot_pot1'])) & (t['Lz'] < poly_rethalo(t['E_tot_pot1'])+0.3)
+    
+    tgse = Table.read('../data/simcat_stars.fits')
+    tdm = Table.read('../data/simcat_dm.fits')
+    
+    ebins = np.linspace(-0.18,-0.08,80)
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(10,10), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.hist(t['E_tot_pot1'][ind_circular & ind_ridge], bins=ebins, density=True, histtype='step', color='b', alpha=0.3)
+    plt.hist(t['E_tot_pot1'][ind_circular & ind_ripple], bins=ebins, density=True, histtype='step', color='b')
+    
+    plt.sca(ax[1])
+    plt.hist(t['E_tot_pot1'][ind_eccentric & (ind_radial | ind_prohalo)], bins=ebins, density=True, histtype='step', color='b')
+    #plt.hist(t['E_tot_pot1'][ind_eccentric], bins=ebins, density=True, histtype='step', color='b', alpha=0.3)
+
+    ebins = np.linspace(-0.18,-0.08,200)
+    plt.hist(tgse['E_tot_pot1'], bins=ebins, density=True, histtype='step', color='r')
+    #plt.hist(tdm['E_tot_pot1'], bins=ebins, density=True, histtype='step', color='k')
+    
+    elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115, -0.111, -0.106])*u.kpc**2*u.Myr**-2
+    #elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    for j in range(Nlevel):
+        for i in range(2):
+            plt.sca(ax[i])
+            plt.axvspan(elevels[2*j].value, elevels[2*j+1].value, color=mpl.cm.Oranges_r(j/(Nlevel+1)), alpha=0.1)
+    
+    plt.tight_layout()
+
+def ridge_zhist(snr=3):
+    """"""
+    
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    # Disk
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0)
+    
+    par = np.load('../data/elz_ridgeline.npy')
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    
+    elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    ind_energy = [(t['E_tot_pot1']>elevels[2*x]) & (t['E_tot_pot1']<elevels[2*x+1]) for x in range(Nlevel)]
+    
+    cmaps = [mpl.cm.Reds, mpl.cm.Oranges, mpl.cm.Greens, mpl.cm.Blues, mpl.cm.Purples]
+    
+    zbins = np.linspace(1,10,100)
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(10,10), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.hist(t['Z_gal'][ind_circular & ind_ridge], bins=zbins, density=True, histtype='step', color='b', alpha=0.3)
+    plt.hist(t['Z_gal'][ind_circular & ind_ripple], bins=zbins, density=True, histtype='step', color='b')
+    
+    plt.sca(ax[1])
+    plt.hist(t['zmax_pot1'][ind_circular & ind_ridge], bins=zbins, density=True, histtype='step', color='b', alpha=0.3)
+    plt.hist(t['zmax_pot1'][ind_circular & ind_ripple], bins=zbins, density=True, histtype='step', color='b')
+    
+
+    zbins = np.linspace(1,10,60)
+    for i in range(1,Nlevel-1):
+        #ind = ind_energy[i] & ind_ridge & ind_circular
+        #plt.hist(t['zmax_pot1'][ind], bins=zbins, density=True, histtype='stepfilled', alpha=0.2, color=cmaps[i](0.5))
+        
+        ind = ind_energy[i] & ind_ripple & ind_circular
+        plt.hist(t['zmax_pot1'][ind], bins=zbins, density=True, histtype='stepfilled', alpha=0.2, color=cmaps[i](0.85))
+    
+    plt.tight_layout()
+
+
+def ripple_chemistry(snr=10, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    #t = Table.read('../data/rcat_msto.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0)
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    
+    elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    de = np.abs(elevels[::2] - elevels[1::2])
+    print(np.sqrt(de).to(u.km/u.s))
+    
+    ind_energy = [(t['E_tot_pot1']>elevels[2*x]) & (t['E_tot_pot1']<elevels[2*x+1]) for x in range(Nlevel)]
+    
+    #ind_e1 = (t['E_tot_pot1']>elevels[0]) & (t['E_tot_pot1']<elevels[1])
+    #ind_e2 = (t['E_tot_pot1']>elevels[2]) & (t['E_tot_pot1']<elevels[3])
+    #ind_e3 = (t['E_tot_pot1']>elevels[4]) & (t['E_tot_pot1']<elevels[5])
+    #ind_e4 = (t['E_tot_pot1']>elevels[6]) & (t['E_tot_pot1']<elevels[7])
+    #ind_e5 = (t['E_tot_pot1']>elevels[8]) & (t['E_tot_pot1']<elevels[9])
+    
+    #ind_energy = [ind_e1, ind_e2, ind_e3, ind_e4, ind_e5]
+    #cmaps = [mpl.cm.OrRd, mpl.cm.YlGn, mpl.cm.PuBu, mpl.cm.BuPu, mpl.cm.Blues, mpl.cm.Oranges]
+    cmaps = [mpl.cm.Reds, mpl.cm.Oranges, mpl.cm.Greens, mpl.cm.Blues, mpl.cm.Purples]
+    
+    plt.close()
+    fig = plt.figure(figsize=(15,8))
+    
+    gs1 = mpl.gridspec.GridSpec(1,1)
+    gs1.update(left=0.08, right=0.45, top=0.95, bottom=0.1, hspace=0.05)
+
+    gs2 = mpl.gridspec.GridSpec(Nlevel,1)
+    gs2.update(left=0.52, right=0.975, top=0.95, bottom=0.1, hspace=0.05)
+
+    ax0 = fig.add_subplot(gs1[0])
+    ax1 = fig.add_subplot(gs2[0])
+    ax2 = fig.add_subplot(gs2[1], sharex=ax1, sharey=ax1)
+    ax3 = fig.add_subplot(gs2[2], sharex=ax1, sharey=ax1)
+    ax4 = fig.add_subplot(gs2[3], sharex=ax1, sharey=ax1)
+    ax5 = fig.add_subplot(gs2[4], sharex=ax1, sharey=ax1)
+    #ax6 = fig.add_subplot(gs2[5], sharex=ax1, sharey=ax1)
+    
+    ax = [ax0, ax1, ax2, ax3, ax4, ax5]
+    
+    # plot background
+    plt.sca(ax[0])
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
+    
+    plt.xlim(-5,5)
+    plt.ylim(-0.18, -0.04)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    for i in range(Nlevel):
+        plt.sca(ax[i+1])
+        plt.plot(t['init_FeH'], t['init_aFe'], 'ko', ms=2, mew=0, alpha=0.2)
+        #plt.plot(t['FeH'], t['aFe'], 'ko', ms=2, mew=0, alpha=0.2)
+
+        plt.xlim(-2.8,0.3)
+        plt.ylim(-0.05,0.55)
+        plt.ylabel('[$\\alpha/Fe$]$_{init}$')
+    plt.xlabel('[Fe/H]$_{init}$')
+    
+    ms = 6
+    
+    for i in range(Nlevel):
+        ind = ind_energy[i] & ind_ridge & ind_circular
+        plt.sca(ax[0])
+        plt.plot(t['Lz'][ind], t['E_tot_pot1'][ind], 'o', ms=2, mew=0, c=cmaps[i](0.5))
+        
+        plt.sca(ax[Nlevel-i])
+        plt.plot(t['init_FeH'][ind], t['init_aFe'][ind], 'o', ms=ms, mew=0, c=cmaps[i](0.5))
+        
+        ind = ind_energy[i] & ind_ripple & ind_circular
+        plt.sca(ax[0])
+        plt.plot(t['Lz'][ind], t['E_tot_pot1'][ind], 'o', ms=2, mew=0, c=cmaps[i](0.85))
+        
+        plt.sca(ax[Nlevel-i])
+        plt.plot(t['init_FeH'][ind], t['init_aFe'][ind], 'o', ms=ms, mew=0, c=cmaps[i](0.85))
+    
+    #plt.tight_layout()
+    plt.savefig('../plots/ripples_chemistry_{:s}.png'.format(tracer))
+
+def ripple_age(snr=10):
+    """"""
+    
+    #t = Table.read('../data/rcat_giants.fits')
+    t = Table.read('../data/rcat_msto_v0.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    p_higha = [-0.14,0.18]
+    poly_higha = np.poly1d(p_higha)
+    ind_higha = (t['init_FeH']>-0.75) & (t['init_aFe']>poly_higha(t['init_FeH']))
+    
+    p_lowa = [-0.14,0.15]
+    poly_lowa = np.poly1d(p_lowa)
+    ind_lowa = (t['init_FeH']>-0.45) & (t['init_aFe']<poly_lowa(t['init_FeH']))
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['E_tot_pot1']>-0.15) & (t['E_tot_pot1']<-0.115)
+    
+    par = np.load('../data/elz_ridgeline_msto.npy')
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    
+    # Halo
+    ind_eccentric = (t['eccen_pot1']>0.7) & (t['E_tot_pot1']>-0.15) & (t['E_tot_pot1']<-0.115)
+    p_gse = [-0.32,-0.02]
+    poly_gse = np.poly1d(p_gse)
+    ind_gse = (t['init_FeH']<-0.6) & (t['init_aFe']<poly_gse(t['init_FeH']))
+    
+    
+    age = 10**t['logAge']*1e-9
+    age_lerr = age - 10**(t['logAge'] - t['logAge_lerr'])*1e-9
+    age_uerr = 10**(t['logAge'] + t['logAge_uerr'])*1e-9 - age
+    age_err = 0.5 * (age_lerr + age_uerr)
+    
+    abins = np.linspace(4,14,25)
+    
+    plt.close()
+    plt.figure(figsize=(10,7))
+    
+    plt.hist(age[ind_circular & ind_ridge & ind_higha], bins=abins, density=True, histtype='step', color='r')
+    plt.hist(age[ind_circular & ind_ripple & ind_higha], bins=abins, density=True, histtype='step', color='r', ls=':')
+
+    plt.hist(age[ind_circular & ind_ridge & ind_lowa], bins=abins, density=True, histtype='step', color='gold')
+    plt.hist(age[ind_circular & ind_ripple & ind_lowa], bins=abins, density=True, histtype='step', color='gold', ls=':')
+    
+    print(np.sum(ind_circular & ind_ripple & ind_lowa)/np.sum(ind_circular & ind_ridge & ind_lowa))
+    #print(np.sum(ind_circular & ind_ridge & ind_lowa))
+    
+    print(np.sum(ind_circular & ind_ripple & ind_higha)/np.sum(ind_circular & ind_ridge & ind_higha))
+    #print(np.sum(ind_circular & ind_ridge & ind_higha))
+    
+
+
+    plt.hist(age[ind_eccentric & ind_gse], bins=abins, density=True, histtype='step', color='b')
+    
+    plt.xlabel('Age [Gyr]')
+    plt.ylabel('Density [Gyr$^{-1}$]')
+    #tg = Table.read('../data/rcat_giants.fits')
+    #ind_sort = np.argsort(age)[::-1]
+    #plt.scatter(t['Lz'][ind_sort], t['E_tot_pot1'][ind_sort], c=age[ind_sort], s=5)
+
+    #plt.ylim(-0.18,-0.1)
+    plt.tight_layout()
+
+def ripple_rguide(tracer='msto'):
+    """"""
+    if tracer=='msto':
+        snr = 20
+    else:
+        snr = 3
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    ind_circular = (t['circLz_pot1']>0.5) & (t['Lz']<0)
+    t = t[ind & ind_circular]
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    
+    rbins = np.linspace(3,13,50)
+    
+    rg = 0.5 * (t['Rapo_pot1'] + t['Rperi_pot1'])
+    
+    rbins = np.logspace(0.3, 1.5, 100)
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(7,7), sharex=True)
+    
+    plt.sca(ax[0])
+    #plt.hist(rg, bins=rbins, histtype='step', color='k', alpha=0.2)
+    plt.hist(rg[ind_ridge], bins=rbins, histtype='step', color='k', density=True, alpha=0.5)
+    plt.hist(rg[ind_ripple], bins=rbins, histtype='step', color='orangered', density=True)
+    
+    plt.ylabel('Number')
+    
+    plt.sca(ax[1])
+    plt.plot(rg[ind_ridge], t['zmax_pot1'][ind_ridge], 'k.', ms=2, alpha=0.2)
+    plt.plot(rg[ind_ripple], t['zmax_pot1'][ind_ripple], 'o', ms=2, mew=0, color='orangered')
+    #plt.hist(rg[ind_ripple], bins=rbins, histtype='step', density=True, color='b', label='giants')
+    #plt.hist(rg_msto[ind_ripple_msto], bins=rbins, histtype='step', density=True, color='r', label='MSTO')
+    
+    plt.xlim(4,40)
+    plt.xlabel('$R_{guide}$ [kpc]')
+    plt.ylabel('$z_{max}$ [kpc]')
+    #plt.legend(loc=1, fontsize='small')
+    
+    plt.gca().set_xscale('log')
+    plt.gca().set_yscale('log')
+    #plt.gca().set_aspect('equal')
+    plt.tight_layout(h_pad=0)
+    plt.savefig('../plots/ripple_rguide_hist_{:s}.png'.format(tracer), dpi=300)
+
+def ripple_period(snr=10):
+    """"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) #& (t['Sgr_FLAG']==0)
+    ind_gse = (t['eccen_pot1']>0.7)
+    ind_sgr = (t['Sgr_FLAG']==1)
+    
+    tracer = 'giants'
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    
+    
+    elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    de = np.abs(elevels[::2] - elevels[1::2])
+    #print(np.sqrt(de).to(u.km/u.s))
+    
+    ind_energy = [(t['E_tot_pot1']>elevels[2*x]) & (t['E_tot_pot1']<elevels[2*x+1]) for x in range(Nlevel)]
+    cmaps = [mpl.cm.Reds, mpl.cm.Oranges, mpl.cm.Greens, mpl.cm.Blues, mpl.cm.Purples]
+    
+    pbins = np.linspace(70,600,150)
+    pbins_coarse = np.linspace(70,600,70)
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(12,8), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.hist(t['orbit_period_pot1'][ind_circular], bins=pbins, histtype='step', density=True, color='r', label='disk')
+    plt.hist(t['orbit_period_pot1'][ind_gse], bins=pbins, histtype='step', density=True, color='navy', label='GSE')
+    plt.hist(t['orbit_period_pot1'][ind_sgr], bins=pbins_coarse, histtype='step', density=True, color='orange', label='Sgr')
+    plt.legend(loc=9, fontsize='small')
+    plt.ylabel('Density [Myr$^{-1}$]')
+    
+    plt.sca(ax[1])
+    plt.hist(t['orbit_period_pot1'][ind_circular], bins=pbins, histtype='step', density=False, color='r', label='disk')
+    for i in range(Nlevel):
+        plt.hist(t['orbit_period_pot1'][ind_ripple & ind_energy[i]], bins=pbins, histtype='step', density=False, color=cmaps[i](0.85), label='')
+        plt.hist(t['orbit_period_pot1'][ind_ridge & ind_energy[i]], bins=pbins, histtype='step', density=False, color=cmaps[i](0.5), label='')
+    
+    plt.xlabel('Period [Myr]')
+    plt.ylabel('Density [Myr$^{-1}$]')
+    
+    plt.tight_layout()
+    #plt.savefig('../plots/ripple_period.png')
+
+def ripple_vrgal():
+    """"""
+    
+    tracer = 'giants'
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>10)
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0)
+    t = t[ind & ind_circular]
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    
+    elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    
+    ind_energy = [(t['E_tot_pot1']>elevels[2*x]) & (t['E_tot_pot1']<elevels[2*x+1]) for x in range(Nlevel)]
+    
+    for i in range(Nlevel):
+        print(i)
+        print(np.median(t['Vr_gal'][ind_energy[i] & ind_ridge]), np.std(t['Vr_gal'][ind_energy[i] & ind_ridge]))
+        print(np.median(t['Vr_gal'][ind_energy[i] & ind_ripple]), np.std(t['Vr_gal'][ind_energy[i] & ind_ripple]))
+
+def chemistry_pops(snr=10, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    #t = Table.read('../data/apogee_{:s}.fits'.format(tracer))
+    #t = Table.read('../data/rcat_msto.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
+    ind_gse = (t['eccen_pot1']>0.85)
+    ind_sgr = t['Sgr_FLAG']==1
+    #print(t.colnames)
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    ind_radial = (dlz>1) & (dlz<1.5)
+    
+    fehbins = np.linspace(-3,0.,40)
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1, figsize=(10,8), sharex=True, sharey=True)
+    
+    plt.sca(ax[0])
+    #plt.plot(t['init_FeH'][ind_circular & ind_ridge], t['init_aFe'][ind_circular & ind_ridge], 'o', ms=3)
+    plt.scatter(t['init_FeH'][ind_circular & ind_ridge], t['init_aFe'][ind_circular & ind_ridge], c=dlz[ind_circular & ind_ridge], s=5, vmin=0, vmax=0.8)
+    
+    plt.sca(ax[1])
+    #plt.plot(t['init_FeH'][ind_circular & ind_ripple], t['init_aFe'][ind_circular & ind_ripple], 'o', ms=3)
+    #plt.scatter(t['init_FeH'][ind_circular & ind_ripple], t['init_aFe'][ind_circular & ind_ripple], c=dlz[ind_circular & ind_ripple], s=5, vmin=0, vmax=0.8)
+    
+    #plt.plot(t['init_FeH'][ind_gse], t['init_aFe'][ind_gse], 'ro', ms=2, mew=0, zorder=0)
+    #plt.plot(t['init_FeH'][ind_sgr], t['init_aFe'][ind_sgr], 'o', color='salmon', ms=2, mew=0, zorder=0)
+    plt.scatter(t['init_FeH'][ind_circular], t['init_aFe'][ind_circular], c=dlz[ind_circular], s=5, vmin=0, vmax=1., zorder=1)
+    
+    #for ind in [ind_ridge, ind_ripple, ind_radial]:
+        #plt.sca(ax[1])
+        #plt.plot(t['init_FeH'][ind & ind_circular], t['init_aFe'][ind & ind_circular], 'o', ms=3)
+        
+        #plt.sca(ax[0])
+        #plt.hist(t['init_FeH'][ind & ind_circular & (t['init_aFe']>0.25)], bins=fehbins, histtype='step', density=True)
+    
+    plt.xlim(-3,0.5)
+    plt.tight_layout()
+
+
+def rapo_rperi(snr=10, tracer='giants'):
+    """"""
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
+    ind_gse = (t['eccen_pot1']>0.85)
+    ind_sgr = t['Sgr_FLAG']==1
+    
+    plt.close()
+    fig, ax = plt.subplots(1,3,figsize=(15,5))
+    
+    for e, ind in enumerate([ind_circular, ind_sgr, ind_gse]):
+        plt.sca(ax[e])
+        plt.plot(t['Rperi_pot1'][ind], t['Rapo_pot1'][ind], 'k.', ms=1)
+    
+    plt.tight_layout()
+
+
+def dlz_z(tracer='giants', snr=10):
+    """"""
+    
+    plt.close()
+    plt.figure()
+    
+    for tracer in ['msto', 'giants']:
+        t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+        ind = (t['SNR']>snr)
+        ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0)
+        t = t[ind & ind_circular]
+        
+        par = np.load('../data/elz_ridgeline.npy')
+        poly = np.poly1d(par)
+        dlz = t['Lz'] - poly(t['E_tot_pot1'])
+        
+        plt.plot(dlz, np.abs(t['Z_gal']), 'o', mew=0, ms=4, alpha=0.5)
+    
+    plt.tight_layout()
+
+def dlz_etot(snr=15):
+    """"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>10)
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['zmax_pot1']>2)
+    t = t[ind & ind_circular]
+    
+    par = np.load('../data/elz_ridgeline.npy')
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    tmsto = Table.read('../data/rcat_msto.fits')
+    ind = (tmsto['SNR']>20)
+    ind_circular = (tmsto['circLz_pot1']>0.3) & (tmsto['Lz']<0) & (tmsto['zmax_pot1']>2)
+    tmsto = tmsto[ind & ind_circular]
+    
+    print(np.median(t['E_tot_pot1_err']), np.median(tmsto['E_tot_pot1_err']))
+    print(np.median(np.abs(t['Z_gal'])), np.median(np.abs(tmsto['Z_gal'])))
+    print(np.nanmedian(t['zmax_pot1'][np.isfinite(t['zmax_pot1'])]))
+    print(np.nanmedian(tmsto['zmax_pot1'][np.isfinite(tmsto['zmax_pot1'])]))
+    
+    dlz_msto = tmsto['Lz'] - poly(tmsto['E_tot_pot1'])
+    
+    ebins = np.linspace(-0.17,-0.08,70)
+    min_giants = 0.15
+    min_msto = 0.05
+    
+    ind_ripple = (dlz>min_giants) & (dlz<1)
+    ind_ripple_msto = (dlz_msto>min_msto) & (dlz_msto<1)
+    
+    plt.close()
+    fig, ax = plt.subplots(3,1,figsize=(9,9), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.hist(t['E_tot_pot1'][ind_ripple], bins=ebins, histtype='step', color='b', density=True)
+    plt.hist(tmsto['E_tot_pot1'][ind_ripple_msto], bins=ebins, histtype='step', color='r', density=True)
+    
+    plt.sca(ax[1])
+    plt.plot(t['E_tot_pot1'], dlz, 'bo', mew=0, ms=2, alpha=0.4)
+    plt.ylabel('$\Delta$ $L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.axhline(min_giants)
+    plt.ylim(-0.2,1.2)
+    
+    plt.sca(ax[2])
+    plt.plot(tmsto['E_tot_pot1'], dlz_msto, 'ro', mew=0, ms=2, alpha=0.4)
+    plt.axhline(min_msto)
+    
+    #elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115, -0.111, -0.106])*u.kpc**2*u.Myr**-2
+    #Nlevel = int(np.size(elevels)/2)
+    #for j in range(Nlevel):
+        #plt.axhspan(elevels[2*j].value, elevels[2*j+1].value, color=mpl.cm.Oranges_r(j/(Nlevel+1)), alpha=0.1)
+    
+    plt.ylim(-0.2,1.2)
+    plt.xlim(-0.17, -0.08)
+    
+    plt.ylabel('$\Delta$ $L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout(h_pad=0)
 
 
 def afeh_feathers():
@@ -1287,25 +2164,27 @@ def gse_disk():
     
     plt.tight_layout()
 
-def period_hist_populations(offset=True):
+def period_hist_populations(offset=True, snr=5):
     """"""
     t = Table.read('../data/rcat_giants.fits')
-    ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
-    ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>5) # & (t['FeH']<-1)
+    ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>snr)
+    ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>snr) # & (t['FeH']<-1)
+    ind_sgr = (t['Sgr_FLAG']==1) & (t['SNR']>snr)
     
+    print(len(t))
     #t_disk = t[ind_disk]
     #t_gse = t[ind_gse]
     
-    # APOGEE
-    ta = Table(fits.getdata('../data/apogee_giants.fits'))
-    ind = (ta['Lz']<-0.5) & (ta['dist']>500)
-    #print(np.percentile(ta['dist'], [16,50,84]))
-    ta = ta[ind]
-    ind_high = (ta['zmax']>2)
-    ind_low = (ta['zmax']<0.3)
-    ta = ta[ind_low]
-    #ta = ta[ind_high]
-    Pa = ta['orbit_period_pot1'] / 947
+    ## APOGEE
+    #ta = Table(fits.getdata('../data/apogee_giants.fits'))
+    #ind = (ta['Lz']<-0.5) & (ta['dist']>500)
+    ##print(np.percentile(ta['dist'], [16,50,84]))
+    #ta = ta[ind]
+    #ind_high = (ta['zmax']>2)
+    #ind_low = (ta['zmax']<0.3)
+    #ta = ta[ind_low]
+    ##ta = ta[ind_high]
+    #Pa = ta['orbit_period_pot1'] / 947
     
     rguide = 0.5*(t['Rperi_pot1']+t['Rapo_pot1'])
     rbins = np.linspace(2,30,80)
@@ -1352,7 +2231,8 @@ def period_hist_populations(offset=True):
         #plt.hist(P[ind_disk & ind_far]-0.015, histtype='step', bins=pbins, density=True)
     
     plt.sca(ax[2])
-    plt.hist(Pa-off[2], histtype='step', bins=pbins, density=True, lw=lw, color='orange')
+    #plt.hist(Pa-off[2], histtype='step', bins=pbins, density=True, lw=lw, color='orange')
+    plt.hist(P[ind_sgr]-off[2], histtype='step', bins=pbins, density=True, lw=lw, color='orange')
     plt.ylabel('Density')
     plt.xlabel('Orbital period / Sgr orbital period')
     plt.text(0.98,0.95, 'APOGEE Thin disk\n($Z_{{max}}<0.3$kpc) & ($L_Z$<-0.5kpc$^2$Myr$^{{-1}}$) & ($d>0.5$kpc)\nP/P$_{{Sgr}}$ - {:g}'.format(off[2]), va='top', ha='right', transform=plt.gca().transAxes, fontsize='small')
@@ -1375,7 +2255,7 @@ def period_hist_populations(offset=True):
     plt.ylim(0,5)
     
     plt.tight_layout(h_pad=0)
-    plt.savefig('../plots/period_hist_populations_off.{:d}.png'.format(offset))
+    #plt.savefig('../plots/period_hist_populations_off.{:d}.png'.format(offset))
 
 def periods():
     """"""
@@ -1909,12 +2789,12 @@ def apogee_kiel():
     
     plt.tight_layout()
 
-def apogee_giants():
+def apogee_giants(Nstep=100, istep=0):
     """"""
     t = Table(fits.getdata('/home/ana/data/apogee.fits'))
-    ind = (t['LOGG']<3.5) & np.isfinite(t['dist']) & (t['Lz']>0.5)
-    t = t[ind][::10]
-    print(len(t))
+    ind = (t['LOGG']<3.5) & np.isfinite(t['dist']) #& (t['Lz']>0.5)
+    t = t[ind][istep::Nstep]
+    #print(len(t))
     
     ceq = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist']*1e-3*u.kpc, pm_ra_cosdec=t['pmra']*u.mas/u.yr, pm_dec=t['pmdec']*u.mas/u.yr, radial_velocity=t['VHELIO_AVG']*u.km/u.s, frame='icrs')
     cgal = ceq.transform_to(coord.Galactocentric)
@@ -1928,8 +2808,8 @@ def apogee_giants():
     Ly = L[1]
     Lz = L[2]
     
-    Ek = w0.kinetic_energy().to(u.km**2*u.s**-2)
-    Epot = w0.potential_energy(ham.potential).to(u.km**2*u.s**-2)
+    #Ek = w0.kinetic_energy().to(u.km**2*u.s**-2)
+    #Epot = w0.potential_energy(ham.potential).to(u.km**2*u.s**-2)
     Etot = w0.energy(ham.potential).to(u.km**2*u.s**-2)
     
     ## circ setup from Rohan
@@ -1961,41 +2841,214 @@ def apogee_giants():
     #t['circLz_pot1'] = circLz
     #t['circLtot_pot1'] = circLtot
     
-    # calculate orbits
-    orbit = ham.integrate_orbit(w0, dt=1*u.Myr, n_steps=5000)
-    T = orbit.estimate_period()
-    t['orbit_period_pot1'] = T
+    ## calculate orbits
+    #orbit = ham.integrate_orbit(w0, dt=1*u.Myr, n_steps=2)
+    #try:
+        #T = orbit.estimate_period()
+    #except TypeError:
+        #T = np.nan
+    #t['orbit_period_pot1'] = T
     
-    # calculate actions
-    o = Orbit(ceq)
+    ## calculate actions
+    #o = Orbit(ceq)
     
-    #giants = dict()
-    t['Jr'] = (o.jr(pot=MWPotential2014) * u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1)
-    t['Jz'] = (o.jz(pot=MWPotential2014) * u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1)
-    t['Jphi'] = (o.jp(pot=MWPotential2014) * u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1)
-    t['Jtot'] = (t['Jr']**2 + t['Jz']**2 + t['Jphi']**2)**0.5
+    ##giants = dict()
+    #t['Jr'] = (o.jr(pot=MWPotential2014) * u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1)
+    #t['Jz'] = (o.jz(pot=MWPotential2014) * u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1)
+    #t['Jphi'] = (o.jp(pot=MWPotential2014) * u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1)
+    #t['Jtot'] = (t['Jr']**2 + t['Jz']**2 + t['Jphi']**2)**0.5
     
     
-    t.write('../data/apogee_giants.fits', overwrite=True)
+    t.write('../data/apogee_giants_{:d}.{:d}.fits'.format(Nstep, istep), overwrite=True)
 
-def apogee_elz():
+def combine_apogee(tracer='giants', Nstep=100):
+    """"""
+    
+    i = 0
+    t = Table.read('../data/apogee_{:s}_{:d}.{:d}.fits'.format(tracer, Nstep, i))
+    #t.remove_columns('orbit_period_pot1')
+    
+    for i in range(1,Nstep):
+        t_ = Table.read('../data/apogee_{:s}_{:d}.{:d}.fits'.format(tracer, Nstep, i))
+        #t_.remove_columns('orbit_period_pot1')
+        t = vstack((t, t_))
+    
+    t.pprint()
+    t.write('../data/apogee_{:s}.fits'.format(tracer), overwrite=True)
+
+def apogee_elz(zmax=False):
     """"""
     t = Table(fits.getdata('../data/apogee_giants.fits'))
-    t = t[::5]
+    #t = t[::5]
+    if zmax:
+        ind = np.abs(t['galz'])>2
+        t = t[ind]
     print(t.colnames)
+    print(np.nanmedian(t['Energy_err']), np.nanmedian(t['Lz_err']), np.nanmedian(t['dist_error']/t['dist']))
     
     plt.close()
     plt.figure()
     
-    plt.plot(t['Lz'], t['E_tot_pot1'], 'k.', ms=2, mew=0, alpha=0.2)
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'k.', ms=1, mew=0, alpha=0.2)
     
-    plt.xlim(-4,4)
+    if not zmax:
+        eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+        for e in eridge:
+            plt.axhline(e, color='r', lw=0.2)
+    
+    plt.xlim(-6,6)
     plt.ylim(-0.3, -0.02)
     
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
     plt.tight_layout()
+    plt.savefig('../plots/apogee_elz_z.{:d}.png'.format(zmax))
+
+def apogee_elz_pops(zmax=False, tracer='giants'):
+    """"""
+    t = Table(fits.getdata('../data/apogee_giants.fits'))
+    #t = t[::5]
+    if zmax:
+        ind = (np.abs(t['galz'])>2)
+        t = t[ind]
+    print(t.colnames)
+    
+    ind_circular = (t['Lz']<0) & (t['e']<0.5) & (t['E_tot_pot1']>-0.16)
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.15)
+    ind_ripple = (dlz>0.15) & (dlz<0.5)
+    ind_radial = (dlz>0.5) & (dlz<1)
+    
+    #ind_ridge = (dlz<0.15)
+    #ind_ripple = (dlz>0.15) & (dlz<0.7)
+    #ind_radial = (dlz>0.7) & (dlz<1)
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2,figsize=(12,5))
+    
+    plt.sca(ax[0])
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'k.', ms=1, mew=0, alpha=0.2)
+    
+    #for ind in [ind_ridge, ind_ripple, ind_radial]:
+    for ind in [ind_ridge, ind_ripple]:
+        plt.plot(t['Lz'][ind & ind_circular], t['E_tot_pot1'][ind & ind_circular], '.', ms=1)
+    
+    eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+    for e in eridge:
+        plt.axhline(e, color='r', lw=0.2)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.3, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    
+    ebins = np.linspace(-0.16, -0.04, 100)
+    plt.sca(ax[1])
+    plt.hist(t['E_tot_pot1'][ind_circular], bins=ebins, histtype='step', density=True, color='k', alpha=0.2)
+    for ind in [ind_ridge, ind_ripple]:
+        plt.hist(t['E_tot_pot1'][ind & ind_circular], bins=ebins, histtype='step', density=True)
+    
+    for e in eridge:
+        plt.axvline(e, color='r', lw=0.2)
+    
+    plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/apogee_elz_ehist_z.{:d}.png'.format(zmax))
+
+def apogee_afe(snr=10, zmax=0, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/apogee_{:s}.fits'.format(tracer))
+    #t = Table.read('../data/apogee_{:s}.fits'.format(tracer))
+    #t = Table.read('../data/rcat_msto.fits')
+    ind = (t['zmax']>zmax) #& (np.abs(t['galz'])>2)
+    t = t[ind]
+    
+    ind_circular = (t['Lz']<0) & (t['e']<0.5) & (t['E_tot_pot1']>-0.16)
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    ind_radial = (dlz>1) & (dlz<1.5)
+    
+    ind_ridge = (dlz<0.15)
+    ind_ripple = (dlz>0.15) & (dlz<0.7)
+    ind_radial = (dlz>0.7) & (dlz<1)
+    
+    fehbins = np.linspace(-3,0.,40)
+    afe = t['MG_H'] - t['FE_H']
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1, figsize=(10,8), sharex=True)
+    
+    for ind in [ind_ridge, ind_ripple, ind_radial]:
+        plt.sca(ax[0])
+        plt.hist(t['FE_H'][ind & ind_circular & (afe>0.25)], bins=fehbins, histtype='step', density=True)
+        
+        plt.sca(ax[1])
+        plt.plot(t['FE_H'][ind & ind_circular], afe[ind & ind_circular], 'o', ms=1)
+    
+    plt.xlim(-3.5,0.5)
+    plt.ylim(-0.2,0.6)
+    
+    plt.tight_layout()
+
+def apogee_alfe(snr=10, zmax=0, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/apogee_{:s}.fits'.format(tracer))
+    #t = Table.read('../data/apogee_{:s}.fits'.format(tracer))
+    #t = Table.read('../data/rcat_msto.fits')
+    ind = (t['zmax']>zmax) & (np.abs(t['galz'])>2)
+    t = t[ind]
+    
+    ind_circular = (t['Lz']<0) & (t['e']<0.5) & (t['E_tot_pot1']>-0.16)
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    ind_radial = (dlz>1) & (dlz<1.5)
+    
+    ind_ridge = (dlz<0.15)
+    ind_ripple = (dlz>0.15) & (dlz<0.7)
+    ind_radial = (dlz>0.7) & (dlz<1)
+    
+    
+    fehbins = np.linspace(-3,0.,40)
+    alfe = t['AL_H'] - t['FE_H']
+    afe = t['MG_H'] - t['FE_H']
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1, figsize=(10,8), sharex=True)
+    
+    for ind in [ind_ridge, ind_ripple, ind_radial]:
+        plt.sca(ax[0])
+        plt.hist(t['FE_H'][ind & ind_circular & (afe>0.25)], bins=fehbins, histtype='step', density=True)
+        
+        plt.sca(ax[1])
+        plt.plot(t['FE_H'][ind & ind_circular], alfe[ind & ind_circular], 'o', ms=1)
+    
+    plt.xlim(-3.5,0.5)
+    plt.ylim(-0.6,0.6)
+    
+    plt.tight_layout()
+
+
 
 def apogee_circ(zmax=10):
     """"""
@@ -2062,28 +3115,41 @@ def apogee_circ(zmax=10):
 def zmax():
     """"""
     t = Table.read('../data/rcat_giants.fits')
-    ind = (t['SNR']>10) & (t['Lz']<0) & (t['circLz_pot1']>0.4)
+    ind = (t['SNR']>3) & (t['Lz']<0) & (t['circLz_pot1']>0.4)
     t = t[ind]
     
     ta = Table(fits.getdata('../data/apogee_giants.fits'))
     ind = (ta['Lz']<0)
     ta = ta[ind]
     
-    ceq = coord.ICRS(ra=ta['RA']*u.deg, dec=ta['DEC']*u.deg)
-    cg = ceq.transform_to(coord.Galactic)
-    ind = (np.abs(cg.b)>40*u.deg)
-    ta = ta[ind]
+    #ceq = coord.ICRS(ra=ta['RA']*u.deg, dec=ta['DEC']*u.deg)
+    #cg = ceq.transform_to(coord.Galactic)
+    #ind = (np.abs(cg.b)>40*u.deg)
+    #ta = ta[ind]
+    
+    print(np.sum(np.abs(t['Z_gal'])>2)/len(t), np.sum(np.abs(t['Z_gal'])>2))
+    print(np.sum(np.abs(ta['galz'])>2)/len(ta), np.sum(np.abs(ta['galz'])>2))
+    
     
     bins = np.linspace(0,10,100)
     
     plt.close()
-    plt.figure()
+    fig, ax = plt.subplots(1,2, figsize=(12,5))
     
+    plt.sca(ax[0])
     plt.hist(t['zmax_pot1'], bins=bins, density=True, histtype='step', label='H3')
     plt.hist(ta['zmax'], bins=bins, density=True, histtype='step', label='APOGEE')
     
     plt.xlabel('$z_{max}$ [kpc]')
     plt.ylabel('Density [kpc$^{-1}$]')
+    
+    plt.sca(ax[1])
+    plt.hist(np.abs(t['Z_gal']), bins=bins, density=True, histtype='step', label='H3')
+    plt.hist(np.abs(ta['galz']), bins=bins, density=True, histtype='step', label='APOGEE')
+    
+    plt.xlabel('$z_{max}$ [kpc]')
+    plt.ylabel('Density [kpc$^{-1}$]')
+    
     plt.legend()
     
     plt.tight_layout()

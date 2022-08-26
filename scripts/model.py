@@ -20,6 +20,7 @@ ham = gp.Hamiltonian(gp.MilkyWayPotential())
 import scipy.stats
 from scipy.stats import gaussian_kde
 from scipy.optimize import minimize
+from scipy import ndimage
 
 import pickle
 import h5py
@@ -772,7 +773,7 @@ def batch_run():
         for Nr in Nradii:
             print(d, Nr)
             t1 = time.time()
-            evolve_sgr(m=1.4e10*u.Msun, a=1*u.kpc, sigma_z=1*u.kpc, sigma_vz=0*u.km/u.s, d=d*u.kpc, Nr=Nr, logspace=True, const_arc=False, Nskip=10)
+            evolve_sgr(m=1.4e11*u.Msun, a=7*u.kpc, sigma_z=1*u.kpc, sigma_vz=0*u.km/u.s, d=d*u.kpc, Nr=Nr, logspace=True, const_arc=False, Nskip=10)
             t2 = time.time()
             print(t2-t1)
 
@@ -780,10 +781,10 @@ def batch_stars():
     """"""
     Nskip = 8
     distances = np.array([26.5,])
-    masses = np.array([2.8,])*1e10
-    sizes = np.array([1,])
+    masses = np.array([5,])*1e10
+    sizes = np.array([2,])
     comp = ['idisk']
-    
+
     for c in comp:
         for m in masses:
             for d in distances:
@@ -799,8 +800,8 @@ def combine_skips():
     """"""
     # simulation setup
     d = 26.5*u.kpc
-    m = 2.8e10*u.Msun
-    a = 1*u.kpc
+    m = 5e10*u.Msun
+    a = 2*u.kpc
     Nskip = 8
     Nrand = 40000
     seed = 3928
@@ -810,7 +811,7 @@ def combine_skips():
     #Nskip = 8
     #Nrand = 40000
     #mw_label = 'idisk'
-    #m = 2e10*u.Msun
+    #m = 1.4e10*u.Msun
     #omega = 41*u.km/u.s/u.kpc
     #seed = 3928
     
@@ -889,9 +890,9 @@ def diagnose_elz():
     """"""
     
     # simulation setup
-    d = 27*u.kpc
-    m = 2.8e10*u.Msun
-    a = 1*u.kpc
+    d = 26.5*u.kpc
+    m = 5e10*u.Msun
+    a = 2*u.kpc
     Nskip = 8
     Nrand = 40000
     mw_label = 'idisk'
@@ -1066,22 +1067,30 @@ def diagnose_periods():
     """"""
     
     # simulation setup
-    d = 27*u.kpc
-    m = 2.8e10*u.Msun
-    a = 1*u.kpc
+    d = 26.5*u.kpc
+    m = 5e10*u.Msun
+    a = 2*u.kpc
     Nskip = 8
     Nrand = 40000
     mw_label = 'idisk'
-    
     root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    #iskip = 0
+    #Nskip = 8
+    #Nrand = 40000
+    #mw_label = 'idisk'
+    #m = 2e10*u.Msun
+    #omega = 41*u.km/u.s/u.kpc
+    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    #fname = '../data/bar_{:s}.h5'.format(root)
     
     f = h5py.File(fname, 'r')
     orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
     f.close()
     
     c = coord.Galactocentric(x=orbit.pos.x[-1]*u.kpc, y=orbit.pos.y[-1]*u.kpc, z=orbit.pos.z[-1]*u.kpc, v_x=orbit.vel.d_x[-1]*u.kpc/u.Myr, v_y=orbit.vel.d_y[-1]*u.kpc/u.Myr, v_z=orbit.vel.d_z[-1]*u.kpc/u.Myr)
-    w0 = gd.PhaseSpacePosition(c.cartesian[::5])
+    w0 = gd.PhaseSpacePosition(c.cartesian[::20])
     
     dt = 1*u.Myr
     Nback = 3000
@@ -1091,7 +1100,7 @@ def diagnose_periods():
     lz_fin = orbit_fid.angular_momentum()[2][-1]
     
     # skip radial orbits that break period estimation (but keep sgr)
-    lzmin = min(lz_fin[0].value, 1)
+    #lzmin = min(lz_fin[0].value, 1)
     if d<=26*u.kpc:
         lzmin = lz_fin[0].value
     else:
@@ -1104,7 +1113,7 @@ def diagnose_periods():
     plt.close()
     plt.figure(figsize=(12,6))
     
-    bins = np.logspace(np.log10(75), np.log10(1020), 100)
+    bins = np.logspace(np.log10(75), np.log10(1020), 200)
     plt.hist(periods.value, bins=bins, histtype='step')
     
     for fr in [1, 2/3, 1/2, 2/7, 1/5, 1/8]:
@@ -1123,8 +1132,127 @@ def aux_ratios():
     print(a/a[0])
 
 
+def visualize_lz_change():
+    """"""
+    
+    # simulation setup
+    d = 26.5*u.kpc
+    m = 5e10*u.Msun
+    a = 2*u.kpc
+    Nskip = 8
+    Nrand = 40000
+    mw_label = 'idisk'
+    
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    #iskip = 0
+    #Nskip = 8
+    #Nrand = 40000
+    #mw_label = 'idisk'
+    #m = 2e10*u.Msun
+    #omega = 41*u.km/u.s/u.kpc
+    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    #fname = '../data/bar_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    # initial
+    e_init = orbit.energy()[0]
+    lz_init = orbit.angular_momentum()[2][0]
+    
+    e_fin = orbit.energy()[-1]
+    lz_fin = orbit.angular_momentum()[2][-1]
+    
+    de = e_fin/e_init
+    
+    dlz = np.abs(lz_fin/lz_init)
+    dlz[dlz<0.05] = 0.05
+    dlz[(dlz>0.95) | (~np.isfinite(dlz))] = 0.95
+    #dlz[dlz>0.8] = 1
+    
+    tout = Table([orbit.pos.x[-1], orbit.pos.y[-1], orbit.pos.z[-1], e_fin, lz_fin, de, dlz], names=('x', 'y', 'z', 'e', 'lz', 'de', 'dlz'))
+    tout.write('../data/sgr_now_{:s}.csv'.format(root), overwrite=True)
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2,figsize=(12,6))
+    
+    plt.sca(ax[0])
+    plt.scatter(orbit.pos.x[0], orbit.pos.y[0], c=e_fin.value, ec='none', s=5, cmap='jet', vmin=-0.2, vmax=-0.05)
+    #plt.scatter(orbit.pos.x[0], orbit.pos.y[0], c=e_init.value, ec='none', s=5, cmap='jet', vmin=-0.2, vmax=-0.05)
+    
+    plt.xlim(-30,30)
+    plt.ylim(-30,30)
+    plt.gca().set_aspect('equal', adjustable='datalim')
+    plt.xlabel('x [kpc]')
+    plt.ylabel('y [kpc]')
+    
+    plt.sca(ax[1])
+    plt.scatter(orbit.pos.x[-1], orbit.pos.y[-1], c=e_fin.value, ec='none', alpha=1-dlz, s=5, cmap='jet', vmin=-0.2, vmax=-0.05)
+    
+    plt.xlim(-30,30)
+    plt.ylim(-30,30)
+    plt.gca().set_aspect('equal', adjustable='datalim')
+    plt.xlabel('x [kpc]')
+    plt.ylabel('y [kpc]')
+    
+    #plt.sca(ax[2])
+    #t = Table.read('../data/rcat_giants.fits')
+    ##ind = t['SNR']>snr
+    ##t = t[ind]
+    
+    #ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) #& (t['SNR']>20)
+    #ind_halo = (t['eccen_pot1']>0.7) & (t['Lz']<0.) #& (t['SNR']>20) # & (t['FeH']<-1)
+    #t = t[ind_disk]
+    
+    #plt.plot(t['X_gal'], t['Y_gal'], 'k.', ms=1)
+    #plt.xlim(-30,30)
+    #plt.ylim(-30,30)
+    #plt.gca().set_aspect('equal', adjustable='datalim')
+    #plt.xlabel('x [kpc]')
+    #plt.ylabel('y [kpc]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/xy_dlz_{:s}.png'.format(root))
 
 
+def paraview_lz_change():
+    """"""
+    
+    # simulation setup
+    d = 26.5*u.kpc
+    m = 5e10*u.Msun
+    a = 2*u.kpc
+    Nskip = 8
+    Nrand = 40000
+    mw_label = 'idisk'
+    
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    # initial
+    e_init = orbit.energy()[0]
+    lz_init = orbit.angular_momentum()[2][0]
+    
+    e_fin = orbit.energy()[-1]
+    lz_fin = orbit.angular_momentum()[2][-1]
+    
+    de = e_fin/e_init
+    
+    dlz = np.abs(lz_fin/lz_init)
+    dlz[dlz<0.05] = 0.05
+    dlz[(dlz>0.95) | (~np.isfinite(dlz))] = 0.95
+    
+    Nt = np.shape(orbit.pos.x)[0]
+    for i in range(Nt):
+        tout = Table([0.1*orbit.pos.x[i], 0.1*orbit.pos.y[i], 0.1*orbit.pos.z[i], e_fin, lz_fin, de, dlz], names=('x', 'y', 'z', 'e', 'lz', 'de', 'dlz'))
+        tout.write('../data/paraview/sgr_{:s}_{:03d}.csv'.format(root, i), overwrite=True)
 
 def boot_bar_ehist():
     """"""
@@ -2337,3 +2465,216 @@ def vary_sgr():
     plt.ylabel('Galactocentric distance [kpc]')
     plt.tight_layout()
 
+
+
+
+# general satellite
+
+def satellite_orbits():
+    """Determine a grid of initial satellite positions to cover the ELz space"""
+    Nrow = 6
+    Ncol = 4
+    
+    z = np.zeros((Nrow,Ncol)) * u.kpc
+    y = np.zeros((Nrow,Ncol)) * u.kpc
+    x = np.tile(np.logspace(1.45,2,Ncol), Nrow).reshape(Nrow, Ncol) * u.kpc
+    
+    q = np.array([x[0], y[0], z[0]])
+    vcirc = ham.potential.circular_velocity(q)
+    
+    vx = np.zeros((Nrow,Ncol)) * u.km/u.s
+    vy = np.tile(np.linspace(-1,1,Nrow), Ncol).reshape(Ncol, Nrow).T * vcirc[np.newaxis, :] * np.linspace(0.6,0.3,Ncol)[np.newaxis,:]
+    vz = np.zeros((Nrow, Ncol)) * u.km/u.s
+    
+    c = coord.Galactocentric(x=x, y=y, z=z, v_x=vx, v_y=vy, v_z=vz)
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0,:].value
+    lz = orbit.angular_momentum()[2][0,:]
+    
+    # save initial positions
+    pickle.dump(c, open('../data/satellite_init.pkl', 'wb'))
+    
+    # periods
+    long_orbit = ham.integrate_orbit(w0, dt=1*u.Myr, n_steps=3000)
+    print(long_orbit.estimate_period(radial=True))
+    
+    # H3 background
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>3)
+    t = t[ind]
+    N = len(t)
+    
+    # weights
+    ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err']))
+    sigma_etot = (np.nanmedian(t['E_tot_pot1_err'][ind_finite])*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value
+    sigma_lz = (np.nanmedian(t['Lz_err'][ind_finite])*u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1).value
+    
+    #2D histogram
+    Nbin = 3000
+    be_lz = np.linspace(-6, 6, Nbin)
+    be_etot = np.linspace(-0.18, -0.02, Nbin)
+    
+    h, xe, ye = np.histogram2d(t['Lz'], t['E_tot_pot1'], bins=(be_lz, be_etot))
+    h += 0.1
+    
+    detot = be_etot[1] - be_etot[0]
+    dlz = be_lz[1] - be_lz[0]
+    sigma_smooth = (sigma_etot/detot, sigma_lz/dlz)
+    
+    h_smooth = ndimage.gaussian_filter(h, sigma_smooth)
+    
+    plt.close()
+    plt.figure()
+    
+    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
+    plt.plot(lz, etot, 'ro')
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+    
+
+def evolve_satellite_stars(mw_label='idisk', Nrand=50000, seed=2874, isat=0, jsat=0, iskip=0, Nskip=8, snap_skip=100):
+    """"""
+    
+    # initialize star particles
+    if mw_label=='halo':
+        c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='idisk':
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)[iskip::Nskip]
+    else:
+        mw_label = 'td'
+        c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    w0_mw = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    N = np.size(c.x)
+    
+    # initialize satellite
+    sat_pot = gp.HernquistPotential(m=2e10*u.Msun, c=1*u.kpc, units=galactic)
+    
+    cs = pickle.load(open('../data/satellite_init.pkl', 'rb'))[isat][jsat]
+    w0_sat = gd.PhaseSpacePosition(cs.transform_to(gc_frame).cartesian)
+    
+    # integrate forward
+    w0 = gd.combine((w0_sat, w0_mw))
+    particle_pot = [None] * (N + 1)
+    particle_pot[0] = sat_pot
+    nbody = DirectNBody(w0, particle_pot, external_potential=ham.potential)
+    
+    # determine period
+    long_orbit = ham.integrate_orbit(w0_sat, dt=1*u.Myr, n_steps=3000)
+    T = long_orbit.physicsspherical.estimate_period() * 2
+    
+    dt = 1*u.Myr
+    #T = 3*u.Gyr
+    Nfwd = int((T/dt).decompose())
+    orbit = nbody.integrate_orbit(dt=dt, n_steps=Nfwd)
+    
+    # save orbits
+    fname = '../data/satellite_{:d}.{:d}_{:s}_N.{:06d}_{:d}.{:d}.h5'.format(isat, jsat, mw_label, Nrand, Nskip, iskip)
+    if os.path.exists(fname):
+        os.remove(fname)
+    
+    fout = h5py.File(fname, 'w')
+    orbit_out = orbit[::snap_skip,:]
+    orbit_out.to_hdf5(fout)
+    fout.close()
+
+def run_satellites():
+    """"""
+    
+    Nskip = 10
+    for i in range(6):
+        for j in range(4):
+            for k in range(Nskip):
+                print(i,j,k)
+                evolve_satellite_stars(mw_label='idisk', Nrand=50000, seed=2874, isat=i, jsat=j, iskip=k, Nskip=Nskip, snap_skip=100)
+    
+    #for i in range(6):
+        #for k in range(4):
+            #print(i,k)
+            #evolve_satellite_stars(mw_label='idisk', Nrand=5000, seed=2874, isat=i, jsat=k, iskip=0, Nskip=8, snap_skip=100)
+    
+
+def combine_satellite(isat=0, jsat=0):
+    """"""
+    # read in satellite
+    Nrand = 50000
+    Nskip = 10
+    iskip = 0
+    fname = '../data/satellite_{:d}.{:d}_{:s}_N.{:06d}_{:d}.{:d}.h5'.format(isat, jsat, mw_label, Nrand, Nskip, iskip)
+    
+
+def plot_elz_satellite(isat=0, jsat=0, mw_label='idisk'):
+    """"""
+    
+    # read in satellite
+    Nrand = 50000
+    Nskip = 10
+    iskip = 0
+    fname = '../data/satellite_{:d}.{:d}_{:s}_N.{:06d}_{:d}.{:d}.h5'.format(isat, jsat, mw_label, Nrand, Nskip, iskip)
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    etot = orbit.energy()[-1,:]
+    lz = orbit.angular_momentum()[2,-1,:]
+    
+    # H3 background
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>3)
+    t = t[ind]
+    N = len(t)
+    
+    # weights
+    ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err']))
+    sigma_etot = (np.nanmedian(t['E_tot_pot1_err'][ind_finite])*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value
+    sigma_lz = (np.nanmedian(t['Lz_err'][ind_finite])*u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1).value
+    
+    #2D histogram
+    Nbin = 3000
+    be_lz = np.linspace(-6, 6, Nbin)
+    be_etot = np.linspace(-0.18, -0.02, Nbin)
+    
+    h, xe, ye = np.histogram2d(t['Lz'], t['E_tot_pot1'], bins=(be_lz, be_etot))
+    h += 0.1
+    
+    detot = be_etot[1] - be_etot[0]
+    dlz = be_lz[1] - be_lz[0]
+    sigma_smooth = (sigma_etot/detot, sigma_lz/dlz)
+    
+    h_smooth = ndimage.gaussian_filter(h, sigma_smooth)
+    
+    plt.close()
+    plt.figure()
+    
+    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
+    plt.plot(lz[0], etot[0], 'wo', mew=0, ms=10, zorder=2)
+    
+    Ntot = 0
+    for iskip in range(Nskip):
+        fname = '../data/satellite_{:d}.{:d}_{:s}_N.{:06d}_{:d}.{:d}.h5'.format(isat, jsat, mw_label, Nrand, Nskip, iskip)
+        f = h5py.File(fname, 'r')
+        orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+        f.close()
+        
+        etot = orbit.energy()[-1,:]
+        lz = orbit.angular_momentum()[2,-1,:]
+        Ntot += np.size(etot)
+        
+        plt.plot(lz[1:], etot[1:], 'ro', mew=0, ms=0.5, zorder=1)
+    
+    #print(Ntot)
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_satellite_{:d}.{:d}.png'.format(isat, jsat))
