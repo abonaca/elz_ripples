@@ -365,7 +365,7 @@ def get_freq(i1, i2, verbose=False, tracer='giants'):
     freqs = np.zeros((N, 3))
     
     for k in range(N):
-        pkl = pickle.load(open('../data/long_orbits/{:s}.{:05d}.pkl'.format(tracer, k+i1), 'rb'))
+        pkl = pickle.load(open('../data/long_orbits/{:s}.{:06d}.pkl'.format(tracer, k+i1), 'rb'))
         
         t = pkl['t']
         w = pkl['w']
