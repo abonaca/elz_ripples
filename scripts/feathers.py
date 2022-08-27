@@ -87,6 +87,7 @@ def rcat_all():
     t = Table(fits.getdata('/home/ana/data/rcat.fits'))
     ind = (t['FLAG']==0) & (t['SNR']>3)
     t = t[ind]
+    print(len(t), np.size(ind))
     
     t['Lx'] = (t['Lx']*u.km/u.s*u.kpc).to(u.kpc**2/u.Myr)
     t['Ly'] = (t['Ly']*u.km/u.s*u.kpc).to(u.kpc**2/u.Myr)
@@ -281,6 +282,56 @@ def long_orbits_sgr():
         
         out = dict(t=orbit.t, w=orbit.w().T)
         pkl = pickle.dump(out, open('../data/long_orbits/sgr.{:05d}.pkl'.format(i), 'wb'))
+
+
+def get_orbit(i1, i2, verbose=False, tracer='giants', test=True):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    if test:
+        t = t[:100]
+    
+    t = t[i1:i2]
+    
+    N = len(t)
+    
+    c = coord.SkyCoord(ra=t['GAIAEDR3_RA']*u.deg, dec=t['GAIAEDR3_DEC']*u.deg, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, distance=t['dist_adpt']*u.kpc, frame='icrs')
+    w = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    
+    for i in range(N):
+        w0 = w[i]
+        orbit = ham.integrate_orbit(w0, dt=1*u.Myr, n_steps=100000)
+        
+        out = dict(t=orbit.t, w=orbit.w().T)
+        pkl = pickle.dump(out, open('../data/long_orbits/{:s}.{:06d}.pkl'.format(tracer, i+i1), 'wb'))
+
+def run_orbits_mp(nproc=8, test=True, tracer='giants'):
+    """"""
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    if test:
+        print(len(t))
+        t = t[:100]
+    
+    Ntot = len(t)
+    indices = np.linspace(0,Ntot,nproc+1, dtype='int')
+    print(indices)
+    for i in range(nproc):
+        t_ = t[indices[i]:indices[i+1]]
+        print(len(t_))
+    
+    processes = []
+
+    t1 = time.time()
+    for i in range(nproc):
+        p = Process(target=get_orbit, args=(indices[i], indices[i+1]), kwargs=dict(tracer=tracer, test=test))
+        p.start()
+        processes.append(p)
+
+    for p in processes:
+        p.join()
+    
+    t2 = time.time()
+    print(t2-t1, (t2-t1)/Ntot)
 
 def get_freq_sgr():
     """"""
