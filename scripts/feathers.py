@@ -331,6 +331,8 @@ def get_freq(i1, i2, verbose=False, tracer='giants'):
             freqs[k] = out.fund_freqs
         except:
             freqs[k] = np.nan
+        
+        np.save('../data/freqs/temp_{:s}.{:d}'.format(tracer, i1+k), freqs[k])
     
     np.save('../data/freqs_{:s}.{:d}.{:d}'.format(tracer, i1, i2), freqs)
 
@@ -1350,7 +1352,7 @@ def omega_comparison(snr=10, tracer='giants'):
     fig, ax = plt.subplots(1,1,figsize=(8,8))
     
     for e, ind in enumerate([ind_circular, ind_sgr, ind_gse]):
-        plt.plot(np.abs(t['omega_R'][ind].to(u.Gyr**-1)), np.abs(t['omega_z'][ind].to(u.Gyr**-1)), '.', ms=1)
+        plt.plot(np.abs(t['omega_R'][ind].to(u.Gyr**-1)), np.abs(t['omega_phi'][ind].to(u.Gyr**-1)), '.', ms=1)
     
     plt.tight_layout()
 
@@ -1396,10 +1398,10 @@ def fft_omegar(snr=10, tracer='giants'):
     t = t[ind]
     
     ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) #& (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
-    ind_gse = (t['eccen_pot1']>0.85)
+    ind_gse = (t['eccen_pot1']>0.7)
     ind_sgr = t['Sgr_FLAG']==1
     
-    labels = ['Disk', 'Disk ripple', 'Sgr', 'GSE']
+    labels = ['Disk', 'Sgr', 'GSE']
     
     par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
     poly = np.poly1d(par)
@@ -1411,18 +1413,18 @@ def fft_omegar(snr=10, tracer='giants'):
     
     omega_bar = (43*u.km/u.s/u.kpc).to(u.Gyr**-1)
     
-    N = 1000
-    bins = np.linspace(0,150,N)
+    N = 2000
+    bins = np.linspace(0,200,N)
     T = bins[1] - bins[0]
     
     plt.close()
     #fig, ax = plt.subplots(3,1,figsize=(10,8), sharex=True)
     fig, ax = plt.subplots(1,1,figsize=(10,6), sharex=True)
     
-    for e, ind in enumerate([ind_circular, ind_circular & ind_ripple, ind_sgr, ind_gse]):
+    for e, ind in enumerate([ind_circular, ind_sgr, ind_gse]):
         #plt.sca(ax[e])
         
-        y, he = np.histogram(np.abs(t['omega_phi'][ind].to(u.Gyr**-1).value), bins=bins)
+        y, he = np.histogram(np.abs(t['omega_z'][ind].to(u.Gyr**-1).value), bins=bins)
         yf = fft(y)
         xf = fftfreq(N, T)[:N//2]
         
@@ -1431,8 +1433,8 @@ def fft_omegar(snr=10, tracer='giants'):
     for i in range(1,11):
         plt.axvline(i*omega_bar.value**-1, color='k', ls=':', lw=0.5)
     
-    print(2*np.pi*0.4)
-    print(2*np.pi*1.5)
+    #print(2*np.pi*0.4)
+    #print(2*np.pi*1.5)
     
     plt.legend()
     plt.gca().set_xscale('log')
