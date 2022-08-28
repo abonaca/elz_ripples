@@ -455,7 +455,7 @@ def freqs(test=True):
     dt = tot/N
     print('{:f} {:f}'.format(tot.to(u.min), dt))
 
-def store_freqs(save=False, test=False, tracer='giants'):
+def store_freqs(save=False, test=False, tracer='giants', nproc=8):
     """"""
     if test:
         Ntot = 100
@@ -464,7 +464,6 @@ def store_freqs(save=False, test=False, tracer='giants'):
         t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
         Ntot = len(t)
     
-    nproc = 8
     indices = np.linspace(0,Ntot,nproc+1, dtype='int')
     
     for i in range(nproc):
@@ -1388,6 +1387,40 @@ def rapo_rperi(snr=10, tracer='giants'):
     
     plt.tight_layout()
 
+def omegas(snr=10, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) #& (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
+    ind_gse = (t['eccen_pot1']>0.85)
+    ind_sgr = t['Sgr_FLAG']==1
+    
+    #t = t[ind_sgr]
+    
+    plt.close()
+    fig, ax = plt.subplots(1,3,figsize=(15,5))
+    
+    plt.sca(ax[0])
+    plt.plot(np.abs(t['omega_R']), np.abs(t['omega_z']), 'k.', ms=1, mew=0, alpha=0.5)
+    plt.xlabel('$\Omega_R$ [Myr$^{-1}$]')
+    plt.ylabel('$\Omega_z$ [Myr$^{-1}$]')
+    
+    plt.sca(ax[1])
+    plt.plot(np.abs(t['omega_phi']), np.abs(t['omega_z']), 'k.', ms=1, mew=0, alpha=0.5)
+    plt.xlabel('$\Omega_\phi$ [Myr$^{-1}$]')
+    plt.ylabel('$\Omega_z$ [Myr$^{-1}$]')
+    
+    plt.sca(ax[2])
+    plt.plot(np.abs(t['omega_R']), np.abs(t['omega_phi']), 'k.', ms=1, mew=0, alpha=0.5)
+    plt.xlabel('$\Omega_R$ [Myr$^{-1}$]')
+    plt.ylabel('$\Omega_\phi$ [Myr$^{-1}$]')
+    
+    plt.tight_layout()
+
+
 def omega_comparison(snr=10, tracer='giants'):
     """"""
     
@@ -1441,7 +1474,7 @@ def omegar_histogram(snr=10, tracer='giants'):
     
     plt.tight_layout(h_pad=0)
 
-def fft_omegar(snr=10, tracer='giants'):
+def fft_omegar(snr=10, tracer='giants', axis='R'):
     """"""
     
     t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
@@ -1452,8 +1485,6 @@ def fft_omegar(snr=10, tracer='giants'):
     ind_gse = (t['eccen_pot1']>0.7)
     ind_sgr = t['Sgr_FLAG']==1
     
-    labels = ['Disk', 'Sgr', 'GSE']
-    
     par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
     poly = np.poly1d(par)
     dlz = t['Lz'] - poly(t['E_tot_pot1'])
@@ -1462,36 +1493,54 @@ def fft_omegar(snr=10, tracer='giants'):
     ind_ripple = (dlz>0.3) & (dlz<1)
     ind_radial = (dlz>1) & (dlz<1.5)
     
-    omega_bar = (43*u.km/u.s/u.kpc).to(u.Gyr**-1)
+    omega_bar = (41*u.km/u.s/u.kpc).to(u.Gyr**-1)
     
-    N = 2000
-    bins = np.linspace(0,200,N)
-    T = bins[1] - bins[0]
+    dx = 0.5
+    bins = np.arange(0,500+dx,dx)
+    bc = 0.5 * (bins[1:] + bins[:-1])
+    N = np.size(bc)
+    T = dx
+    #T = bins[1] - bins[0]
+    
+    labels = ['Disk', 'Sgr', 'GSE']
+    indices = [ind_circular, ind_sgr, ind_gse]
+    colors = ['r', 'orange', 'navy']
     
     plt.close()
     #fig, ax = plt.subplots(3,1,figsize=(10,8), sharex=True)
-    fig, ax = plt.subplots(1,1,figsize=(10,6), sharex=True)
+    fig, ax = plt.subplots(2,1,figsize=(10,6), sharex=False)
     
-    for e, ind in enumerate([ind_circular, ind_sgr, ind_gse]):
+    for e, ind in enumerate(indices):
         #plt.sca(ax[e])
         
-        y, he = np.histogram(np.abs(t['omega_z'][ind].to(u.Gyr**-1).value), bins=bins)
+        y, he = np.histogram(np.abs(t['omega_{:s}'.format(axis)][ind].to(u.Gyr**-1).value), bins=bins, density=True)
         yf = fft(y)
         xf = fftfreq(N, T)[:N//2]
         
-        plt.plot(xf, 2.0/N * np.abs(yf[0:N//2]), label=labels[e])
+        plt.sca(ax[0])
+        plt.plot(bc, y, '-', color=colors[e], label=labels[e])
+        
+        plt.sca(ax[1])
+        plt.plot(xf, 2.0/N * np.abs(yf[0:N//2]), label=labels[e], color=colors[e])
     
-    for i in range(1,11):
+    plt.sca(ax[0])
+    plt.legend()
+    plt.gca().set_yscale('log')
+    plt.xlim(0,150)
+    plt.xlabel('$\Omega_{{{:s}}}$ [Gyr$^{{-1}}$]'.format(axis))
+    plt.ylabel('f($\Omega$) [Gyr]')
+    
+    plt.sca(ax[1])
+    for i in range(1,2):
         plt.axvline(i*omega_bar.value**-1, color='k', ls=':', lw=0.5)
     
-    #print(2*np.pi*0.4)
-    #print(2*np.pi*1.5)
-    
-    plt.legend()
-    plt.gca().set_xscale('log')
+    #plt.gca().set_xscale('log')
     plt.gca().set_yscale('log')
+    plt.xlabel('$k_{{{:s}}}$ [Gyr]'.format(axis))
+    plt.ylabel('P(k)')
         
     plt.tight_layout(h_pad=0)
+    plt.savefig('../plots/fft_omega_{:s}.png'.format(axis))
 
 
 def dlz_z(tracer='giants', snr=10):
