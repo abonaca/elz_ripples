@@ -19,6 +19,7 @@ from superfreq import SuperFreq
 from scipy.optimize import minimize, root
 import functools
 from scipy.stats import gaussian_kde
+from sklearn import mixture
 
 import time
 import pickle
@@ -30,6 +31,394 @@ ham = gp.Hamiltonian(gp.MilkyWayPotential())
 
 coord.galactocentric_frame_defaults.set('v4.0')
 gc_frame = coord.Galactocentric()
+
+# prep
+
+def ridgelines(snr=5, tracer='giants'):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    
+    # disk
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0)
+    
+    Nbin = 30
+    wbin = 0.002 * u.kpc**2*u.Myr**-2
+    if tracer=='giants':
+        ebins = np.linspace(-0.17, -0.08, Nbin) * u.kpc**2*u.Myr**-2
+        pmin = 5
+    else:
+        ebins = np.linspace(-0.17, -0.1, Nbin) * u.kpc**2*u.Myr**-2
+        pmin = 4
+    
+    lzmax = np.zeros(Nbin) #* u.kpc**2*u.Myr**-1
+    for i in range(Nbin):
+        ind_bin = (t['E_tot_pot1']>ebins[i] - wbin) & (t['E_tot_pot1']<ebins[i] + wbin)
+        lzmax[i] = np.percentile(t['Lz'][ind_circular & ind_bin], pmin)
+    
+    if tracer=='giants':
+        eridge = np.linspace(-0.17, -0.05, 100)
+        k = 4
+    else:
+        eridge = np.linspace(-0.17, -0.1, 100)
+        k = 4
+    
+    par = np.polyfit(ebins, lzmax, k)
+    poly = np.poly1d(par)
+    lzridge = poly(eridge)
+    
+    np.save('../data/elz_ridgeline_{:s}.{:d}'.format(tracer, snr), par)
+    
+    # halo
+    ind_eccentric = (t['eccen_pot1']>0.7)
+    
+    lz_envelope = np.zeros((2,Nbin)) #* u.kpc**2*u.Myr**-1
+    for i in range(Nbin):
+        ind_bin = (t['E_tot_pot1']>ebins[i] - wbin) & (t['E_tot_pot1']<ebins[i] + wbin)
+        lz_envelope[:,i] = np.percentile(t['Lz'][ind_eccentric & ind_bin],[30,70])
+    
+    par_prohalo = np.polyfit(ebins, lz_envelope[0], 4)
+    poly_prohalo = np.poly1d(par_prohalo)
+    lz_prohalo = poly_prohalo(eridge)
+
+    par_rethalo = np.polyfit(ebins, lz_envelope[1], 4)
+    poly_rethalo = np.poly1d(par_rethalo)
+    lz_rethalo = poly_rethalo(eridge)
+    
+    np.save('../data/elz_envelope_{:s}.{:d}'.format(tracer, snr), [par_prohalo, par_rethalo])
+    
+    
+    plt.close()
+    plt.figure(figsize=(8,8))
+    
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
+    #plt.plot(t['Lz'][ind_circular], t['E_tot_pot1'][ind_circular], 'ko', ms=2, mew=0, alpha=0.3)
+    plt.plot(lzmax, ebins, 'ro')
+    plt.plot(lzridge, eridge, 'r-')
+    plt.plot(lzridge+0.3, eridge, 'r--')
+    plt.plot(lzridge+1, eridge, 'r:')
+    
+    plt.plot(lz_prohalo, eridge, 'b-')
+    plt.plot(lz_prohalo-0.3, eridge, 'b:')
+    plt.plot(lz_rethalo, eridge, 'b-')
+    plt.plot(lz_rethalo+0.3, eridge, 'b:')
+
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_ridgeline_{:s}.{:d}.png'.format(tracer, snr))
+
+def save_bootstrap(snr=5, Nboot=2000, test=True):
+    """Save bootstrap samples in ELz for all giants"""
+    
+    t = Table.read('../data/rcat_giants.fits')
+    ind = t['SNR']>snr
+    t = t[ind]
+    if test:
+        t = t[:1000]
+    N = len(t)
+    print(np.sum(ind))
+    
+    # randomly draw 6D positions
+    Ndim = 6
+    seed = 12512
+    np.random.seed(seed)
+    offsets = np.random.randn(N,Nboot,Ndim)
+    
+    ra = (t['GAIAEDR3_RA'][:,np.newaxis] + offsets[:,:,0] * t['GAIAEDR3_RA_ERROR'][:,np.newaxis]) * u.deg
+    dec = (t['GAIAEDR3_DEC'][:,np.newaxis] + offsets[:,:,1] * t['GAIAEDR3_DEC_ERROR'][:,np.newaxis]) * u.deg
+    dist = (t['dist_adpt'][:,np.newaxis] + offsets[:,:,2] * t['dist_adpt_err'][:,np.newaxis]) * u.kpc
+    dist[dist<0*u.kpc] = 0*u.kpc
+    pmra = (t['GAIAEDR3_PMRA'][:,np.newaxis] + offsets[:,:,3] * t['GAIAEDR3_PMRA_ERROR'][:,np.newaxis]) * u.mas/u.yr
+    pmdec = (t['GAIAEDR3_PMDEC'][:,np.newaxis] + offsets[:,:,4] * t['GAIAEDR3_PMDEC_ERROR'][:,np.newaxis]) * u.mas/u.yr
+    vr = (t['Vrad'][:,np.newaxis] + offsets[:,:,5] * t['Vrad_err'][:,np.newaxis]) * u.km/u.s
+    
+    # calculate orbital properties
+    c = coord.SkyCoord(ra=ra, dec=dec, distance=dist, pm_ra_cosdec=pmra, pm_dec=pmdec, radial_velocity=vr, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    
+    etot = orbit.energy()[0].reshape(N,-1)
+    lz = orbit.angular_momentum()[2][0].reshape(N,-1)
+    
+    # save
+    outdict = dict(etot=etot, lz=lz)
+    pickle.dump(outdict, open('../data/elz_samples.{:d}.pkl'.format(snr),'wb'))
+
+def snr_err(snr=5):
+    """"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    print(len(t))
+    
+    lz_err = (t['Lz_err']*u.km*u.kpc*u.s**-1).to(u.kpc**2*u.Myr**-1)
+    etot_err = (t['E_tot_pot1_err']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
+    
+    print(np.percentile(lz_err, [75,95]))
+    print(np.percentile(etot_err, [75,95]))
+    
+    plt.close()
+    fig, ax = plt.subplots(2,2,figsize=(12,12), sharex='col', sharey='row')
+    
+    plt.sca(ax[0][0])
+    #plt.plot(t['Lz'], lz_err, 'k.', ms=1, alpha=0.5)
+    plt.scatter(t['Lz'], lz_err, c=t['dist_adpt'], s=2, vmin=1.5, vmax=15)
+    
+    plt.ylim(0,0.56)
+    plt.ylabel('$\Delta$ $L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    plt.sca(ax[1][0])
+    plt.plot(t['Lz'], etot_err, 'k.', ms=1, alpha=0.5)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$\Delta$ $E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    
+    plt.xlim(-6,6)
+    plt.ylim(0, 0.012)
+    
+    plt.sca(ax[0][1])
+    plt.plot(t['E_tot_pot1'], lz_err, 'k.', ms=1, alpha=0.5)
+    
+    plt.sca(ax[1][1])
+    plt.plot(t['E_tot_pot1'], etot_err, 'k.', ms=1, alpha=0.5)
+    
+    plt.xlim(-0.18,-0.02)
+    plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_uncertainties.{:d}.png'.format(snr))
+
+def gmm_fit():
+    """"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>5)
+    t = t[ind]
+    
+    # load ELz samples
+    pkl = pickle.load(open('../data/elz_samples.5.pkl', 'rb'))
+    
+    # load disk ridgeline
+    par = np.load('../data/elz_ridgeline_giants.5.npy')
+    poly = np.poly1d(par)
+    
+    eridge = np.linspace(-0.16, -0.05, 100)
+    lzridge = poly(eridge)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    # define groups of stars in the ELz plane
+    ind_1 = (dlz<0.3)
+    ind_2 = (dlz>0.3) & (dlz<1) & (t['E_tot_pot1']>-0.14)
+    ind_3 = (t['Lz']<-0.2) & (t['Lz']>-0.5)
+    ind_4 = (t['Lz']<0) & (t['Lz']>-0.2)
+    
+    X_train = pkl['etot'][ind_2][:,::3].flatten().reshape(-1,1)
+    print(np.shape(X_train))
+    
+    clf = mixture.GaussianMixture(n_components=4, covariance_type="full")
+    clf.fit(X_train)
+    
+    #print(clf.means_, clf.weights_, clf.covariances_)
+    print(clf.bic(X_train))
+    
+    ebins = np.linspace(-0.18,-0.08,150)
+    X_sample, Y_sample = clf.sample(100000)
+    #XX = np.linspace(-0.18,-0.08,150).reshape(-1,1)
+    #Z = clf.predict_proba(XX)
+    
+    
+    plt.close()
+    plt.figure(figsize=(10,6))
+    
+    plt.hist(X_train.flatten().value, bins=ebins, histtype='step', density=True)
+    plt.hist(X_sample.flatten(), bins=ebins, histtype='step', density=True)
+    #plt.plot(XX, Z, 'r-')
+    
+    plt.tight_layout()
+
+def kde_fit():
+    """"""
+    
+    # load rcat
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>5)
+    t = t[ind]
+    
+    etot_err = (t['E_tot_pot1_err']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
+    
+    # load ELz samples
+    pkl = pickle.load(open('../data/elz_samples.5.pkl', 'rb'))
+    
+    # load disk ridgeline
+    par = np.load('../data/elz_ridgeline_giants.5.npy')
+    poly = np.poly1d(par)
+    
+    eridge = np.linspace(-0.16, -0.05, 100)
+    lzridge = poly(eridge)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    # define groups of stars in the ELz plane
+    ind_1 = (dlz<0.3)
+    ind_2 = (dlz>0.3) & (dlz<1) & (t['E_tot_pot1']>-0.14)
+    ind_3 = (t['Lz']<-0.2) & (t['Lz']>-0.5)
+    ind_4 = (t['Lz']<0) & (t['Lz']>-0.2)
+    
+    x = np.linspace(-0.18,-0.06,1000)
+    
+    
+    plt.close()
+    plt.figure(figsize=(12,6))
+    
+    for ind in [ind_1, ind_2, ind_3, ind_4]:
+        sigma_etot = np.median(etot_err[ind].value)
+        print(sigma_etot)
+        #kde = gaussian_kde(t['E_tot_pot1'][ind], bw_method=sigma_etot)
+        kde = gaussian_kde(pkl['etot'][ind].flatten(), bw_method=sigma_etot)
+        
+        y = kde(x)
+        plt.plot(x, y, '-')
+        
+    plt.tight_layout()
+    
+    
+
+
+#########
+# plots #
+#########
+
+def elz_ehist(snr=5):
+    """"""
+    
+    # load rcat
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    N = len(t)
+    
+    lz_err = (t['Lz_err']*u.km*u.kpc*u.s**-1).to(u.kpc**2*u.Myr**-1)
+    etot_err = (t['E_tot_pot1_err']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
+    
+    
+    # load ELz samples
+    pkl = pickle.load(open('../data/elz_samples.{:d}.pkl'.format(snr), 'rb'))
+    
+    # load disk ridgeline
+    par = np.load('../data/elz_ridgeline_giants.{:d}.npy'.format(snr))
+    poly = np.poly1d(par)
+    
+    eridge = np.linspace(-0.16, -0.05, 100)
+    lzridge = poly(eridge)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    # define groups of stars in the ELz plane
+    ind_1 = (dlz<0.3)
+    ind_2 = (dlz>0.3) & (dlz<1)
+    #ind_3 = (dlz>1) & (t['Lz']<-0.2)
+    ind_3 = (t['Lz']<-0.2) & (t['Lz']>-0.5)
+    #ind_4 = (t['Lz']<0) & (t['Lz']>-0.5)
+    #ind_4 = (t['Lz']<0) & (t['Lz']>-0.2)
+    ind_4 = (t['Lz']<0.5) & (t['Lz']>0.2)
+    
+    ind = [ind_1, ind_2, ind_3, ind_4]
+    color = [mpl.cm.plasma(x) for x in [0.8, 0.6, 0.4, 0.2]]
+    
+    
+    # Plotting
+    
+    plt.close()
+    fig = plt.figure(figsize=(16,8))
+    
+    gs1 = mpl.gridspec.GridSpec(1,1)
+    gs1.update(left=0.08, right=0.48, top=0.95, bottom=0.1, hspace=0.05)
+
+    gs2 = mpl.gridspec.GridSpec(4,1)
+    gs2.update(left=0.55, right=0.975, top=0.95, bottom=0.1, hspace=0.05)
+
+    ax0 = fig.add_subplot(gs1[0])
+    ax1 = fig.add_subplot(gs2[0])
+    ax2 = fig.add_subplot(gs2[1])
+    ax3 = fig.add_subplot(gs2[2])
+    ax4 = fig.add_subplot(gs2[3])
+    
+    ax = [ax0, ax1, ax2, ax3, ax4]
+    
+    #######
+    # E-Lz
+    
+    plt.sca(ax[0])
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
+    #plt.plot(pkl['lz'], pkl['etot'], 'ko', ms=1, mew=0, alpha=0.005, rasterized=True)
+    
+    alpha = 0.2
+    plt.plot(lzridge+0.3, eridge, 'r:', alpha=alpha)
+    plt.plot(lzridge+1, eridge, 'r:', alpha=alpha)
+    plt.axvline(0, color='r', ls=':', alpha=alpha)
+    plt.axvline(-0.2, color='r', ls=':', alpha=alpha)
+    plt.axvline(-0.5, color='r', ls=':', alpha=alpha)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    # typical uncertainties
+    Nerr = 7
+    lz_cen = np.linspace(-5,5,Nerr)
+    etot_cen = np.ones(Nerr) * -0.035
+    lz_err_cen = np.ones(Nerr)
+    etot_err_cen = np.ones(Nerr)
+    dlz_cen = 0.5*(lz_cen[1] - lz_cen[0])
+    
+    for i in range(Nerr):
+        ind_ = (t['Lz']>lz_cen[i]-dlz_cen) & (t['Lz']<lz_cen[i]+dlz_cen) #& (t['E_tot_pot1']<-0.02)
+        lz_err_cen[i] = np.median(lz_err[ind_]).value
+        etot_err_cen[i] = np.median(etot_err[ind_]).value
+        
+    plt.errorbar(lz_cen, etot_cen, yerr=etot_err_cen, xerr=lz_err_cen, fmt='none', color='k', alpha=0.6, lw=1)
+    
+    ###############
+    # E histograms
+    
+    ebins = np.linspace(-0.18,-0.08,80)
+    ebins = np.linspace(-0.18,-0.08,150)
+    
+    for i in range(4):
+        plt.sca(ax[i+1])
+    
+        #plt.hist(t['E_tot_pot1'][ind[i]], bins=ebins, density=True, histtype='step')
+        plt.hist(pkl['etot'][ind[i]].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.8, lw=1.5)
+
+        ind_snr = t['SNR']>10
+        #ind_snr = etot_err<0.0025*u.kpc**2*u.Myr**-2
+        #plt.hist(t['E_tot_pot1'][ind[i] & ind_snr], bins=ebins, density=True, histtype='step')
+        #plt.hist(pkl['etot'][ind[i] & ind_snr].ravel().value, bins=ebins, density=True, histtype='step')
+        
+        plt.text(0.98,0.9, '{:d}'.format(np.sum(ind[i])), transform=plt.gca().transAxes, fontsize='small', va='top', ha='right')
+        
+        plt.xlim(-0.18, -0.08)
+        plt.ylabel('Density')
+        
+        if i<3:
+            plt.gca().set_xticklabels([])
+    
+    plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.savefig('../paper/fig1.{:d}.png'.format(snr))
+
+
+
+
+##########
+# Old
 
 def bootstrap_elz(Nboot=1000, test=True):
     """"""
@@ -295,6 +684,50 @@ def bootstrap_periods(test=True, snr=20, Nboot=1000):
     print(t2-t1)
     
     pickle.dump(periods, open('../data/bootstrap_periods_snr.{:d}.pkl'.format(snr), 'wb'))
+    
+def bootstrap_rguide(test=True, snr=20, Nboot=1000):
+    """"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = t['SNR']>snr
+    t = t[ind]
+    print(len(t))
+    if test:
+        t = t[:10]
+    N = len(t)
+    
+    # randomly draw 6D positions
+    Ndim = 6
+    seed = 251
+    np.random.seed(seed)
+    offsets = np.random.randn(N,Nboot,Ndim)
+    
+    ra = (t['GAIAEDR3_RA'][:,np.newaxis] + offsets[:,:,0] * t['GAIAEDR3_RA_ERROR'][:,np.newaxis]) * u.deg
+    dec = (t['GAIAEDR3_DEC'][:,np.newaxis] + offsets[:,:,1] * t['GAIAEDR3_DEC_ERROR'][:,np.newaxis]) * u.deg
+    dist = (t['dist_adpt'][:,np.newaxis] + offsets[:,:,2] * t['dist_adpt_err'][:,np.newaxis]) * u.kpc
+    dist[dist<0*u.kpc] = 0*u.kpc
+    pmra = (t['GAIAEDR3_PMRA'][:,np.newaxis] + offsets[:,:,3] * t['GAIAEDR3_PMRA_ERROR'][:,np.newaxis]) * u.mas/u.yr
+    pmdec = (t['GAIAEDR3_PMDEC'][:,np.newaxis] + offsets[:,:,4] * t['GAIAEDR3_PMDEC_ERROR'][:,np.newaxis]) * u.mas/u.yr
+    vr = (t['Vrad'][:,np.newaxis] + offsets[:,:,5] * t['Vrad_err'][:,np.newaxis]) * u.km/u.s
+    
+    # calculate orbital periods
+    c = coord.SkyCoord(ra=ra, dec=dec, distance=dist, pm_ra_cosdec=pmra, pm_dec=pmdec, radial_velocity=vr, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    
+    periods = np.empty((N,Nboot))*u.Myr
+    rapo = np.empty((N,Nboot))*u.kpc
+    rperi = np.empty((N,Nboot))*u.kpc
+    t1 = time.time()
+    for i in range(N):
+        for j in range(Nboot):
+            orbit = ham.integrate_orbit(w0[i,j], dt=1*u.Myr, n_steps=5000)
+            rapo[i,j] = orbit.apocenter()
+            rperi[i,j] = orbit.pericenter()
+    t2 = time.time()
+    print(t2-t1)
+    
+    out = dict(rperi=rperi, rapo=rapo, rg=0.5*(rapo+rperi))
+    
+    pickle.dump(out, open('../data/bootstrap_rguide_snr.{:d}.pkl'.format(snr), 'wb'))
     
 def best_distance(snr=20):
     """"""

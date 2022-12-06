@@ -29,6 +29,8 @@ import os
 from fractions import Fraction
 import time
 
+import readsnap
+
 coord.galactocentric_frame_defaults.set('v4.0')
 gc_frame = coord.Galactocentric()
 
@@ -128,6 +130,84 @@ def initialize_idisk(ret=True, graph=False, Ntot=1000, Nr=20, seed=193, sigma_z=
     if ret:
         ind = etot<0
         return c[ind]
+
+def initialize_disk(graph=False, gala=False, logspace=False, Nr=20, const_arc=True, sigma_z=0*u.kpc, sigma_vz=0*u.km/u.s, verbose=True):
+    """Initial positions and velocities of stars in a uniform, circular, thin disk"""
+    
+    if logspace:
+        radii = np.logspace(0.7,1.5,Nr) * u.kpc
+        radii = np.logspace(0.7,1.6,Nr) * u.kpc
+        radii = np.logspace(0.6,1.6,Nr) * u.kpc
+        radii = np.logspace(np.log10(2),np.log10(50),Nr) * u.kpc
+    else:
+        radii = np.linspace(5,30,Nr) * u.kpc
+        radii = np.linspace(4,40,Nr) * u.kpc
+        radii = np.linspace(2,50,Nr) * u.kpc
+    
+    circumference = 2*np.pi*radii
+    Nr = np.size(radii)
+    Ntot = Nr * 20
+
+    if const_arc:
+        arc = np.ones(Nr) * 1*u.kpc
+        
+        #Nt = np.int64(np.ceil(circumference/arc).decompose().value)
+        Nt = np.int64((circumference/arc).decompose().value)
+    else:
+        #Nt = np.ones(Nr, dtype=int) * 30
+        Ntmin = 15
+        #p = scipy.stats.norm.pdf(radii.value, loc=10, scale=3)
+        p = scipy.stats.norm.pdf(radii.value, loc=11, scale=6)
+        Nt = np.int64(Ntot * p / np.sum(p))
+        ind = Nt<Ntmin
+        Nt[ind] = Ntmin
+        
+        arc = circumference / Nt
+    
+    N = np.sum(Nt)
+    np.random.seed(421)
+    if verbose:
+        print(N, Ntot)
+    
+    x0 = np.zeros(N) * u.kpc
+    y0 = np.zeros(N) * u.kpc
+    z0 = np.zeros(N) * u.kpc
+    z0 = np.random.randn(N) * sigma_z
+    
+    vx0 = np.zeros(N) * u.km/u.s
+    vy0 = np.zeros(N) * u.km/u.s
+    vz0 = np.zeros(N) * u.km/u.s
+    vz0 = np.random.randn(N) * sigma_vz
+    
+    if gala:
+        q = np.array([radii.value, np.zeros(Nr), np.zeros(Nr)]) * u.kpc
+        vnorm = -1*ham.potential.circular_velocity(q)
+    else:
+        vnorm = np.ones(Nr) * (-200*u.km/u.s)
+    
+    k = 0
+    for i in range(Nr):
+        for j in range(Nt[i]):
+            theta = j * (arc[i]/radii[i]).decompose().value * u.radian
+            
+            x0[k] = radii[i] * np.cos(theta)
+            y0[k] = radii[i] * np.sin(theta)
+            
+            vx0[k] = vnorm[i] * (-np.sin(theta))
+            vy0[k] = vnorm[i] * np.cos(theta)
+            
+            k += 1
+    
+    ic = [x0, y0, z0, vx0, vy0, vz0]
+    
+    if graph:
+        plt.close()
+        plt.plot(x0, y0, 'ko')
+        
+        plt.gca().set_aspect('equal')
+        plt.tight_layout()
+    
+    return ic
 
 
 
@@ -436,6 +516,117 @@ def initialize_td(Nrand=50000, seed=2924, ret=True, graph=False):
 
 
 
+##################
+# Equilibrium disk
+
+def nbody_disk():
+    """"""
+    filename = '../data/snap_010'
+    
+    posbulge = readsnap.read_block(filename, 'POS ', parttype=3) # load positions of halo particles
+    velbulge = readsnap.read_block(filename, 'VEL ', parttype=3) # load positions of halo particles
+    idbulge = readsnap.read_block(filename, 'ID  ', parttype=3) # load IDs of halo particles
+    
+    #poshalo = readsnap.read_block(filename, 'POS ', parttype=1) # load positions of halo particles
+    #velhalo = readsnap.read_block(filename, 'VEL ', parttype=1) # load positions of halo particles
+    #idhalo = readsnap.read_block(filename, 'ID  ', parttype=1) # load IDs of halo particles
+    ##poshalo = poshalo[np.argsort(idhalo)]
+    ##velhalo = velhalo[np.argsort(idhalo)]
+    ##idhalo = np.sort(idhalo)
+    
+    #poshalo = poshalo - np.mean(posbulge, axis=0)
+    #velhalo = velhalo - np.mean(velbulge, axis=0)
+    
+    posdisk = readsnap.read_block(filename, 'POS ', parttype=2) # load positions of disk particles
+    veldisk = readsnap.read_block(filename, 'VEL ', parttype=2) # load positions of disk particles
+    iddisk = readsnap.read_block(filename, 'ID  ', parttype=2) # load IDs of disk particles
+    #posdisk = poshalo[np.argsort(iddisk)]
+    #veldisk = velhalo[np.argsort(iddisk)]
+    #iddisk = np.sort(iddisk)
+    
+    posdisk = posdisk - np.mean(posbulge, axis=0)
+    veldisk = veldisk - np.mean(velbulge, axis=0)
+    
+    print(posdisk)
+    print(veldisk)
+    
+    outdict = dict(x=posdisk, v=veldisk)
+    pickle.dump(outdict, open('../data/thick_disk.pkl', 'wb'))
+
+def plot_td():
+    """"""
+    td = pickle.load(open('../data/thick_disk.pkl', 'rb'))
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2,figsize=(10,5))
+    
+    plt.sca(ax[0])
+    plt.plot(td['x'][:,0], td['x'][:,1], 'k.', mew=0, alpha=0.1, ms=2)
+    plt.xlabel('X [kpc]')
+    plt.ylabel('Y [kpc]')
+    plt.gca().set_aspect('equal')
+    
+    plt.sca(ax[1])
+    plt.plot(td['x'][:,0], td['x'][:,2], 'k.', mew=0, alpha=0.1, ms=2)
+    plt.xlabel('X [kpc]')
+    plt.ylabel('Z [kpc]')
+    plt.gca().set_aspect('equal', adjustable='datalim')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/nbody_disk_init.png')
+
+def initialize_ndisk(Nrand=50000, seed=2572, ret=True, graph=False):
+    """Draw particles from N21 disk"""
+    
+    td = pickle.load(open('../data/thick_disk.pkl', 'rb'))
+    
+    c = coord.Galactocentric(x=td['x'][:,0], y=td['x'][:,1], z=td['x'][:,2], v_x=td['v'][:,0], v_y=td['v'][:,1], v_z=td['v'][:,2])
+    np.random.seed(seed)
+    
+    
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0].value
+    lz = orbit.angular_momentum()[2][0]
+    
+    if graph:
+        print(np.sum((etot>-0.16) & (etot<-0.06)))
+        print(np.sum(etot<0))
+        
+        t = Table.read('../data/rcat_giants.fits')
+        ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
+        ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>5) # & (t['FeH']<-1)
+        t = t[ind_disk]
+        
+        ebins = np.linspace(-0.20,-0.02,200)
+        #ebins = np.linspace(-0.16,-0.06,50)
+        
+        plt.close()
+        fig, ax = plt.subplots(1,2,figsize=(10,5))
+        
+        plt.sca(ax[0])
+        plt.plot(lz, etot, 'k.', ms=1, alpha=0.1)
+        
+        plt.xlim(-8,2)
+        plt.ylim(-0.2, -0.02)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+        plt.sca(ax[1])
+        plt.hist(etot, bins=ebins, density=True, label='Model')
+        #plt.hist(t['E_tot_pot1'], bins=ebins, density=True, histtype='step', label='H3', lw=2)
+        
+        plt.legend(fontsize='small')
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+    
+        plt.tight_layout()
+        plt.savefig('../plots/initialize_ndisk_phase.png')
+    
+    if ret:
+        ind = etot<0
+        return c[ind]
+
 ####################
 # Orbit integrations
 
@@ -615,7 +806,8 @@ def evolve_sgr(d=27*u.kpc, m=1.4e10*u.Msun, a=7*u.kpc, Napo=5, Nr=10, logspace=F
     if const_arc:
         disk_label += '_flat'
     
-    fname = '../data/sgr_hernquist_d.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_Nr.{:03d}_z.{:.1f}_vz.{:04.1f}.h5'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, disk_label, Nr, sigma_z.to(u.kpc).value, sigma_vz.to(u.km/u.s).value)
+    fname = '../data/sgr_hernquist_d.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_Nr.{:03d}.h5'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, disk_label, Nr)
+    #fname = '../data/sgr_hernquist_d.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_Nr.{:03d}_z.{:.1f}_vz.{:04.1f}.h5'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, disk_label, Nr, sigma_z.to(u.kpc).value, sigma_vz.to(u.km/u.s).value)
     if os.path.exists(fname):
         os.remove(fname)
     
@@ -728,6 +920,8 @@ def evolve_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, mw_label='h
         c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
     elif mw_label=='idisk':
         c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)[iskip::Nskip]
+    elif mw_label=='ndisk':
+        c = initialize_ndisk(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
     else:
         mw_label = 'td'
         c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
@@ -765,15 +959,16 @@ def batch_run():
     """"""
     
     distances = np.arange(24,28.1,1)
-    distances = np.arange(27,27.1,1)
+    distances = np.arange(26,26.1,1)
     Nradii = np.array([10,20,50,100])
     Nradii = np.array([500,])
+    masses = np.array([1.8,]) * 1e10
     
     for d in distances[:]:
-        for Nr in Nradii:
-            print(d, Nr)
+        for m in masses[:]:
+            print(d, m)
             t1 = time.time()
-            evolve_sgr(m=1.4e11*u.Msun, a=7*u.kpc, sigma_z=1*u.kpc, sigma_vz=0*u.km/u.s, d=d*u.kpc, Nr=Nr, logspace=True, const_arc=False, Nskip=10)
+            evolve_sgr(m=m*u.Msun, a=1*u.kpc, sigma_z=0*u.kpc, sigma_vz=0*u.km/u.s, d=d*u.kpc, Nr=300, logspace=True, const_arc=False, Nskip=100)
             t2 = time.time()
             print(t2-t1)
 

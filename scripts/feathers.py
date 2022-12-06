@@ -22,13 +22,16 @@ from scipy.stats import gaussian_kde
 from scipy import ndimage
 from skimage.filters import unsharp_mask
 from scipy.fft import fft, ifft, fftfreq
+from astroML.density_estimation import XDGMM
 
 import time
 import pickle
 from multiprocessing import Pool, Process
 from fractions import Fraction
 
-ham = gp.Hamiltonian(gp.MilkyWayPotential())
+mwpot = gp.load('/home/ana/data/MilkyWayPotential2022.yml')
+ham = gp.Hamiltonian(mwpot)
+#ham = gp.Hamiltonian(gp.MilkyWayPotential())
 
 coord.galactocentric_frame_defaults.set('v4.0')
 gc_frame = coord.Galactocentric()
@@ -564,6 +567,45 @@ def elz_chemistry(snr=10):
     
     plt.tight_layout()
 
+def new_elz(snr=3):
+    """"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    N = len(t)
+    print(N)
+    
+    c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    
+    etot = orbit.energy()[0].reshape(N,-1)
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2,figsize=(14,7), sharex=True, sharey=True)
+    
+    plt.sca(ax[0])
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.sca(ax[1])
+    plt.plot(t['Lz'], etot, 'ko', ms=2, mew=0, alpha=0.3)
+    
+    plt.errorbar(-4, -0.16, yerr=np.median((t['E_tot_pot1_err']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value), xerr=np.median((t['Lz_err']*u.kpc*u.km*u.s**-1).to(u.kpc**2*u.Myr**-1).value), fmt='none', color='k', alpha=0.3)
+    
+    print(np.median(t['E_tot_pot1_err']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2))
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    plt.tight_layout()
+    
+
 def elz_hist(snr=3, tracer='giants', weight=False):
     """"""
     t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
@@ -699,6 +741,146 @@ def elz_unsharp(tracer='giants', snr=3):
     plt.tight_layout()
     plt.savefig('../plots/elz_unsharp_{:s}.png'.format(tracer))
 
+
+def elz_xd(tracer='giants', snr=3, n_clusters=6):
+    """"""
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr) & (t['E_tot_pot1']<-0.02) & (t['E_tot_pot1']>-0.18) & (t['Lz']<6) & (t['Lz']>-6)
+    t = t[ind]
+    
+    X = np.vstack([t[f] for f in ['Lz', 'E_tot_pot1']]).T
+    Xerr = np.vstack([t[f + '_err'] for f in ['Lz', 'E_tot_pot1']]).T
+    
+    W = np.eye(2) # could be a combination of vectors, say ugriz -> g, u-g, g-r, ...
+    X = np.dot(X, W.T)
+    
+    # compute error covariance from mixing matrix
+    Xcov = np.zeros(Xerr.shape + Xerr.shape[-1:])
+    Xcov[:, range(Xerr.shape[1]), range(Xerr.shape[1])] = Xerr ** 2
+
+    # each covariance C = WCW^T
+    # best way to do this is with a tensor dot-product
+    Xcov = np.tensordot(np.dot(Xcov, W.T), W, (-2, -1))
+    
+    rseed = 294
+    max_iter = 100
+    verbose = True
+    np.random.seed(rseed)
+    
+    clf = XDGMM(n_clusters, max_iter=max_iter, tol=1E-5, verbose=verbose)
+    clf.fit(X, Xcov)
+    
+    pickle.dump(clf, open('../data/elz_xd_snr.{:d}_comp.{:d}.pkl'.format(snr, n_clusters), 'wb'))
+
+def elz_xd_plot(tracer='giants', snr=3, n_clusters=6):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr) #& (t['E_tot_pot1']<-0.02) & (t['E_tot_pot1']>-0.18) & (t['Lz']<6) & (t['Lz']>-6)
+    t = t[ind]
+    
+    X = np.vstack([t[f] for f in ['Lz', 'E_tot_pot1']]).T
+    Xerr = np.vstack([t[f + '_err'] for f in ['Lz', 'E_tot_pot1']]).T
+    
+    W = np.eye(2) # could be a combination of vectors, say ugriz -> g, u-g, g-r, ...
+    X = np.dot(X, W.T)
+    
+    clf = pickle.load(open('../data/elz_xd_snr.{:d}_comp.{:d}.pkl'.format(snr, n_clusters), 'rb'))
+    
+    np.random.seed(42)
+    X_sample = clf.sample(X.shape[0]*10)
+    
+    plt.close()
+    plt.figure()
+    
+    plt.plot(X_sample[:,0], X_sample[:,1], 'ko', ms=1, mew=0, alpha=0.3)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+
+
+def etot_ecc(tracer='giants', snr=3):
+    """"""
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr) & (np.isfinite(t['E_tot_pot1'])) & (np.isfinite(t['eccen_pot1']))
+    t = t[ind]
+    
+    xbins = np.linspace(0,1,500)
+    ybins = np.linspace(-0.18,0,500)
+    
+    plt.close()
+    plt.figure()
+    
+    plt.hist2d(t['eccen_pot1'], t['E_tot_pot1'], bins=(xbins,ybins), cmap='magma')
+    
+    plt.xlabel('ecc')
+    plt.ylabel('$E_{tot}$')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/etot_ecc_{:s}.png'.format(tracer))
+
+def elz_segue(snr=3):
+    """"""
+    #t = Table.read('/home/ana/data/SEGUE_rcat_V1.0_MSG.fits')
+    t = Table.read('../data/segue_giants.fits')
+    ind = (t['SNR']>snr) #& (t['zmax_pot1']>0) #& (t['eccen_pot1']>0.7)
+    t = t[ind]
+    print(len(t))
+    #print(np.nanmedian(t['E_tot_pot1_err']), np.nanmedian(t['Lz_err']), np.nanmedian(t['dist_adpt_err']/t['dist_adpt']))
+    
+    plt.close()
+    plt.figure(figsize=(8,8))
+    
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_giants_segue_snr.{:d}.png'.format(snr), dpi=300)
+
+
+def r_vr():
+    """"""
+    t = Table.read('../data/rcat_giants.fits')
+    #t = Table.read('../data/rcat_all.fits')
+    ind = (t['eccen_pot1']>0.8) & (t['FeH']<-1) #& (t['SNR']>5)
+    t = t[ind]
+    print(len(t))
+    
+    ind_pro = t['Lz']<0
+    ind_ret = t['Lz']>0
+    
+    plt.close()
+    fig, ax = plt.subplots(1,3,figsize=(12,4), sharex=True, sharey=True)
+    
+    plt.sca(ax[0])
+    plt.plot(t['R_gal'][ind_pro], t['Vr_gal'][ind_pro], 'ko', ms=2, mew=0, alpha=0.3)
+    
+    plt.sca(ax[1])
+    plt.plot(t['R_gal'][ind_ret], t['Vr_gal'][ind_ret], 'ko', ms=2, mew=0, alpha=0.3)
+    
+    plt.sca(ax[2])
+    plt.plot(t['R_gal'], t['Vr_gal'], 'ko', ms=2, mew=0, alpha=0.3)
+    #plt.scatter(t['R_gal'], t['Vr_gal'], c=t['Lz'], vmin=-1, vmax=1, cmap='RdBu', s=1)
+    
+    plt.ylim(-450,450)
+    plt.gca().set_xscale('log')
+    
+    for i in range(3):
+        plt.sca(ax[i])
+        plt.axhline(0, color='r', lw=0.5)
+    
+    plt.tight_layout()
 
 def jrlz():
     """"""
@@ -1257,6 +1439,10 @@ def ripple_period(snr=10):
     ind_ridge = (dlz<0.3)
     ind_ripple = (dlz>0.3) & (dlz<1)
     
+    dt = 20*u.Myr
+    dom = 2*np.pi/dt
+    tacc = 2*np.pi/dom
+    print(tacc)
     
     elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
     Nlevel = int(np.size(elevels)/2)
@@ -1366,6 +1552,52 @@ def chemistry_pops(snr=10, tracer='giants'):
     plt.xlim(-3,0.5)
     plt.tight_layout()
 
+def ripple_ecc(tracer='msto'):
+    """"""
+    if tracer=='msto':
+        snr = 20
+    else:
+        snr = 3
+    
+    t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    ind_circular = (t['Lz']<0) #& (t['circLz_pot1']>0.5)
+    
+    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    poly = np.poly1d(par)
+    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    
+    ind_ridge = (dlz<0.3)
+    ind_ripple = (dlz>0.3) & (dlz<1)
+    
+    elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    ind_energy = [(t['E_tot_pot1']>elevels[2*x]) & (t['E_tot_pot1']<elevels[2*x+1]) for x in range(Nlevel)]
+    
+    cmaps = [mpl.cm.Reds, mpl.cm.Oranges, mpl.cm.Greens, mpl.cm.Blues, mpl.cm.Purples]
+    
+    plt.close()
+    plt.figure()
+    
+    plt.plot(t['eccen_pot1'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3, zorder=0)
+    
+    if tracer=='msto':
+        plt.scatter(t['eccen_pot1'], t['E_tot_pot1'], c=10**t['logAge'], zorder=10, s=1)
+    
+    for i in range(Nlevel):
+        plt.axhline(elevels.value[i*2], lw=0.5)
+        #ind = ind_energy[i] & ind_ridge & ind_circular
+        #plt.plot(t['eccen_pot1'][ind], t['E_tot_pot1'][ind], 'o', ms=0.1, mew=0, c=cmaps[i](0.5))
+
+        #ind = ind_energy[i] & ind_ripple & ind_circular
+        #plt.plot(t['eccen_pot1'][ind], t['E_tot_pot1'][ind], 'o', ms=0.1, mew=0, c=cmaps[i](0.8))
+    
+    plt.xlabel('Eccentricity')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/ripple_eccen_etot_{:s}.png'.format(tracer))
 
 
 def rapo_rperi(snr=10, tracer='giants'):
@@ -1395,10 +1627,10 @@ def omegas(snr=10, tracer='giants'):
     t = t[ind]
     
     ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) #& (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
-    ind_gse = (t['eccen_pot1']>0.85)
+    ind_gse = (t['eccen_pot1']>0.7)
     ind_sgr = t['Sgr_FLAG']==1
     
-    #t = t[ind_sgr]
+    t = t[ind_gse]
     
     plt.close()
     fig, ax = plt.subplots(1,3,figsize=(15,5))
@@ -1432,11 +1664,24 @@ def omega_comparison(snr=10, tracer='giants'):
     ind_gse = (t['eccen_pot1']>0.85)
     ind_sgr = t['Sgr_FLAG']==1
     
+    labels = ['Disk', 'Sgr', 'GSE']
+    
     plt.close()
-    fig, ax = plt.subplots(1,1,figsize=(8,8))
+    fig, ax = plt.subplots(1,1,figsize=(10,6))
+    
+    #plt.plot(np.abs((t['omega_phi'].to(u.Gyr**-1)/t['omega_R'].to(u.Gyr**-1))), np.abs((t['omega_z'].to(u.Gyr**-1)/t['omega_R'].to(u.Gyr**-1))), 'k.', ms=1)
+    plt.plot((t['omega_phi'].to(u.Gyr**-1)/np.abs(t['omega_R'].to(u.Gyr**-1))), np.abs((t['omega_z'].to(u.Gyr**-1)/t['omega_R'].to(u.Gyr**-1))), 'k.', ms=1)
     
     for e, ind in enumerate([ind_circular, ind_sgr, ind_gse]):
-        plt.plot(np.abs(t['omega_R'][ind].to(u.Gyr**-1)), np.abs(t['omega_phi'][ind].to(u.Gyr**-1)), '.', ms=1)
+        plt.plot((t['omega_phi'][ind].to(u.Gyr**-1)/np.abs(t['omega_R'][ind].to(u.Gyr**-1))), np.abs((t['omega_z'][ind].to(u.Gyr**-1)/t['omega_R'][ind].to(u.Gyr**-1))), '.', ms=1, label=labels[e])
+        #plt.plot(np.abs(t['omega_R'][ind].to(u.Gyr**-1)), np.abs(t['omega_phi'][ind].to(u.Gyr**-1)), '.', ms=1)
+    
+    plt.legend(markerscale=5, handlelength=0.5, fontsize='small')
+    plt.xlabel('$\Omega_\phi$ / $|\Omega_R|$')
+    plt.ylabel('$|\Omega_z|$ / $|\Omega_R|$')
+    plt.xlim(-2.5,2.5)
+    plt.ylim(0, 2.5)
+    plt.gca().set_aspect('equal')
     
     plt.tight_layout()
 
@@ -1478,20 +1723,20 @@ def fft_omegar(snr=10, tracer='giants', axis='R'):
     """"""
     
     t = Table.read('../data/rcat_{:s}.fits'.format(tracer))
-    ind = (t['SNR']>snr)
+    ind = (t['SNR']>snr) #& (t['dist_adpt']<3)
     t = t[ind]
     
-    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) #& (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
+    ind_circular = (t['circLz_pot1']>0.3) & (t['Lz']<0) #& (t['SNR']>20) #& (t['eccen_pot1']<0.5) & (t['Sgr_FLAG']==0)
     ind_gse = (t['eccen_pot1']>0.7)
     ind_sgr = t['Sgr_FLAG']==1
     
-    par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
-    poly = np.poly1d(par)
-    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    #par = np.load('../data/elz_ridgeline_{:s}.npy'.format(tracer))
+    #poly = np.poly1d(par)
+    #dlz = t['Lz'] - poly(t['E_tot_pot1'])
     
-    ind_ridge = (dlz<0.3)
-    ind_ripple = (dlz>0.3) & (dlz<1)
-    ind_radial = (dlz>1) & (dlz<1.5)
+    #ind_ridge = (dlz<0.3)
+    #ind_ripple = (dlz>0.3) & (dlz<1)
+    #ind_radial = (dlz>1) & (dlz<1.5)
     
     omega_bar = (41*u.km/u.s/u.kpc).to(u.Gyr**-1)
     
@@ -1525,14 +1770,18 @@ def fft_omegar(snr=10, tracer='giants', axis='R'):
     
     plt.sca(ax[0])
     plt.legend()
-    plt.gca().set_yscale('log')
+    #plt.gca().set_yscale('log')
     plt.xlim(0,150)
     plt.xlabel('$\Omega_{{{:s}}}$ [Gyr$^{{-1}}$]'.format(axis))
     plt.ylabel('f($\Omega$) [Gyr]')
     
-    plt.sca(ax[1])
     for i in range(1,2):
+        plt.sca(ax[0])
+        plt.axvline(i*omega_bar.value, color='k', ls=':', lw=0.5)
+        
+        plt.sca(ax[1])
         plt.axvline(i*omega_bar.value**-1, color='k', ls=':', lw=0.5)
+        #plt.axvline(2*np.pi*i*omega_bar.value**-1, color='k', ls=':', lw=0.5)
     
     #plt.gca().set_xscale('log')
     plt.gca().set_yscale('log')
@@ -1540,7 +1789,7 @@ def fft_omegar(snr=10, tracer='giants', axis='R'):
     plt.ylabel('P(k)')
         
     plt.tight_layout(h_pad=0)
-    plt.savefig('../plots/fft_omega_{:s}.png'.format(axis))
+    plt.savefig('../plots/fft_omega_{:s}_{:s}.png'.format(axis, tracer))
 
 
 def dlz_z(tracer='giants', snr=10):
@@ -3451,7 +3700,8 @@ def fan():
     plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', mew=0, ms=3)
     
     plt.xlim(-6,6)
-    plt.ylim(-0.18, -0.02)
+    #plt.ylim(-0.18, -0.02)
+    plt.ylim(-0.02, -0.18)
     plt.axis('off')
     
     plt.tight_layout()
