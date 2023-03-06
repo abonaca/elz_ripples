@@ -286,8 +286,7 @@ def kde_fit():
         plt.plot(x, y, '-')
         
     plt.tight_layout()
-    
-    
+
 
 
 #########
@@ -319,13 +318,13 @@ def elz_ehist(snr=5):
     dlz = t['Lz'] - poly(t['E_tot_pot1'])
     
     # define groups of stars in the ELz plane
-    ind_1 = (dlz<0.3)
-    ind_2 = (dlz>0.3) & (dlz<1)
+    ind_1 = (dlz<0.3) & (t['Lz']<-0.5)
+    ind_2 = (dlz>0.3) & (dlz<1) & (t['Lz']<-0.5)
     #ind_3 = (dlz>1) & (t['Lz']<-0.2)
     ind_3 = (t['Lz']<-0.2) & (t['Lz']>-0.5)
     #ind_4 = (t['Lz']<0) & (t['Lz']>-0.5)
-    #ind_4 = (t['Lz']<0) & (t['Lz']>-0.2)
-    ind_4 = (t['Lz']<0.5) & (t['Lz']>0.2)
+    ind_4 = (t['Lz']<0.2) & (t['Lz']>-0.2)
+    #ind_4 = (t['Lz']<0.5) & (t['Lz']>0.2)
     
     ind = [ind_1, ind_2, ind_3, ind_4]
     color = [mpl.cm.plasma(x) for x in [0.8, 0.6, 0.4, 0.2]]
@@ -411,6 +410,13 @@ def elz_ehist(snr=5):
             plt.gca().set_xticklabels([])
     
     plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    # show gaps
+    egap = [-0.16397, -0.15766, -0.15249, -0.14117, -0.12969, -0.12403, -0.11891, -0.10511, -0.09767]
+    for e in egap:
+        for i in range(4):
+            plt.sca(ax[i+1])
+            plt.axvline(e, color='k', ls=':', lw=0.5)
     
     plt.savefig('../paper/fig1.{:d}.png'.format(snr))
 
@@ -998,7 +1004,7 @@ def nobootstrap_elz(snr=20, test=False):
     egap = [-0.16397, -0.15766, -0.15249, -0.14117, -0.12969, -0.12403, -0.11891, -0.10511, -0.09767]
     
     plt.close()
-    fig, ax = plt.subplots(2,1,figsize=(10,8), sharex=True)
+    fig, ax = plt.subplots(2,1,figsize=(15,8), sharex=True)
     
     for e in egap:
         for i in range(2):
@@ -1014,8 +1020,22 @@ def nobootstrap_elz(snr=20, test=False):
         N = len(t)
         print(N)
         
+        # load disk ridgeline
+        par = np.load('../data/elz_ridgeline_giants.{:d}.npy'.format(snr))
+        poly = np.poly1d(par)
+        
+        eridge = np.linspace(-0.16, -0.05, 100)
+        lzridge = poly(eridge)
+        dlz = t['Lz'] - poly(t['E_tot_pot1'])
+        
         ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0)
         ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.)
+        
+        # define groups of stars in the ELz plane
+        ind_1 = (dlz<0.3) & (t['Lz']<-0.5)
+        ind_disk = (dlz>0.3) & (dlz<1) & (t['Lz']<-0.5)
+        ind_halo = (t['Lz']<-0.2) & (t['Lz']>-0.5)
+        ind_4 = (t['Lz']<0.2) & (t['Lz']>-0.2)
         
         ## randomly draw 6D positions
         #Ndim = 6

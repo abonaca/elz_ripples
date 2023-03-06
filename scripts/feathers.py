@@ -508,18 +508,28 @@ def store_freqs(save=False, test=False, tracer='giants', nproc=8):
         t.write('../data/rcat_{:s}.fits'.format(tracer), overwrite=True)
 
 
-def elz(snr=3):
+def elz(snr=3, new=False):
     """"""
     t = Table.read('../data/rcat_giants.fits')
-    ind = (t['SNR']>snr) & (t['zmax_pot1']>0) #& (t['eccen_pot1']>0.7)
+    ind = (t['SNR']>snr) #& (t['zmax_pot1']>0) #& (t['eccen_pot1']>0.7)
     t = t[ind]
+    
+    if new:
+        c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+        w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+        
+        orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+        etot = orbit.energy()[0].reshape(len(t),-1)
+    else:
+        etot = t['E_tot_pot1']
+    
     print(len(t))
     print(np.nanmedian(t['E_tot_pot1_err']), np.nanmedian(t['Lz_err']), np.nanmedian(t['dist_adpt_err']/t['dist_adpt']))
     
     plt.close()
     plt.figure(figsize=(8,8))
     
-    plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
+    plt.plot(t['Lz'], etot, 'ko', ms=2, mew=0, alpha=0.3)
     
     plt.xlim(-6,6)
     plt.ylim(-0.18, -0.02)
@@ -528,7 +538,7 @@ def elz(snr=3):
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
     plt.tight_layout()
-    plt.savefig('../plots/elz_giants_snr.{:d}.png'.format(snr), dpi=300)
+    plt.savefig('../plots/elz_giants_snr.{:d}.{:d}.png'.format(snr, new), dpi=300)
 
 def elz_chemistry(snr=10):
     """"""
@@ -570,7 +580,7 @@ def elz_chemistry(snr=10):
 def new_elz(snr=3):
     """"""
     t = Table.read('../data/rcat_giants.fits')
-    ind = (t['SNR']>snr)
+    ind = (t['SNR']>snr) & (t['eccen_pot1']>0.7)
     t = t[ind]
     N = len(t)
     print(N)
@@ -604,7 +614,139 @@ def new_elz(snr=3):
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
     
     plt.tight_layout()
+
+# model comparison
+def geometry(snr=3, d=26):
+    """Plot distributions of |Z|, cylindrical R, and spherical r for H3 disk and halo, and compare them to the models"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    N = len(t)
     
+    # get energy in updated potential
+    c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    etot = orbit.energy()[0].reshape(N,-1)
+    
+    cg = c.transform_to(coord.Galactocentric())
+    
+    ind_halo = (t['Lz']<0) & (t['eccen_pot1']>0.7)
+    ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.3) & (t['circLz_pot1']<0.75)
+    
+    zbins = np.linspace(0,30,50)
+    rbins = np.linspace(0,50,50)
+    
+    # models
+    mdisk = pickle.load(open('../data/model_interact_d.{:.1f}_m.2.0_a.01_ndisk_N.100000.pkl'.format(d), 'rb'))
+    mhalo = pickle.load(open('../data/model_interact_d.{:.1f}_m.2.0_a.01_nhalo_N.100000.pkl'.format(d), 'rb'))
+    
+    plt.close()
+    fig, ax = plt.subplots(1,3,figsize=(15,5))
+    
+    plt.sca(ax[0])
+    plt.hist(np.abs(cg.z[ind_halo].value), bins=zbins, density=True, histtype='step', color='b', label='H3 halo')
+    plt.hist(np.abs(mhalo['cg'].z.value), bins=zbins, density=True, histtype='step', color='b', ls=':', label='Model halo')
+    plt.hist(np.abs(cg.z[ind_disk].value), bins=zbins, density=True, histtype='step', color='r', label='H3 disk')
+    plt.hist(np.abs(mdisk['cg'].z.value), bins=zbins, density=True, histtype='step', color='r', ls=':', label='Model disk')
+    plt.xlabel('|Z| [kpc]')
+    plt.ylabel('Density [kpc$^{-1}$]')
+    plt.legend(fontsize='small')
+
+    plt.sca(ax[1])
+    plt.hist(np.abs(cg.cylindrical.rho[ind_halo].value), bins=rbins, density=True, histtype='step', color='b')
+    plt.hist(np.abs(mhalo['cg'].cylindrical.rho.value), bins=zbins, density=True, histtype='step', color='b', ls=':')
+    plt.hist(np.abs(cg.cylindrical.rho[ind_disk].value), bins=rbins, density=True, histtype='step', color='r')
+    plt.hist(np.abs(mdisk['cg'].cylindrical.rho.value), bins=zbins, density=True, histtype='step', color='r', ls=':')
+    plt.xlabel('R [kpc]')
+    plt.ylabel('Density [kpc$^{-1}$]')
+
+    plt.sca(ax[2])
+    plt.hist(np.abs(cg.spherical.distance[ind_halo].value), bins=rbins, density=True, histtype='step', color='b')
+    plt.hist(np.abs(mhalo['cg'].spherical.distance.value), bins=zbins, density=True, histtype='step', color='b', ls=':')
+    plt.hist(np.abs(cg.spherical.distance[ind_disk].value), bins=rbins, density=True, histtype='step', color='r')
+    plt.hist(np.abs(mdisk['cg'].spherical.distance.value), bins=zbins, density=True, histtype='step', color='r', ls=':')
+    plt.xlabel('r [kpc]')
+    plt.ylabel('Density [kpc$^{-1}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/survey_geometry.png')
+
+def ehist(snr=3, d=26):
+    """Plot energy histograms of H3 disk and halo, overplot models perturbed by Sgr w mass-loss and dynamical friction"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr)
+    t = t[ind]
+    N = len(t)
+    
+    # get energy in updated potential
+    c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    etot = orbit.energy()[0].reshape(N,-1)
+    
+    ind_halo = (t['Lz']<0) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.9)
+    ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.3) & (t['circLz_pot1']<0.7)
+    
+    #ind_halo = (t['Lz']<10) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.9)
+    #ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.6) & (t['circLz_pot1']<1)
+    
+    p_higha = [-0.14,0.18]
+    poly_higha = np.poly1d(p_higha)
+    ind_higha = (t['init_FeH']>-0.75) & (t['init_aFe']>poly_higha(t['init_FeH']))
+    
+    p_lowa = [-0.14,0.15]
+    poly_lowa = np.poly1d(p_lowa)
+    ind_lowa = (t['init_FeH']>-0.45) & (t['init_aFe']<poly_lowa(t['init_FeH']))
+    
+    p_mpoor = [-0.32,-0.02]
+    poly_mpoor = np.poly1d(p_mpoor)
+    ind_mpoor = (t['init_FeH']<-0.6) & (t['init_aFe']<poly_mpoor(t['init_FeH']))
+    
+    
+    #ind_disk = ind_disk & ind_higha
+    #ind_halo = ind_halo & ind_mpoor
+    
+    # models
+    mdisk = pickle.load(open('../data/models/model_interact_d.28.5_m.1.0.100.0_a.01.5.0_ndisk_N.050000.pkl', 'rb'))
+    mhalo = pickle.load(open('../data/models/model_interact_d.28.5_m.1.0.100.0_a.01.5.0_ndisk_N.050000.pkl', 'rb'))
+    #mdisk = pickle.load(open('../data/models/model_interact_d.28.5_m.0.2.300.0_a.01.5.0_ndisk_N.050000.pkl', 'rb'))
+    #mhalo = pickle.load(open('../data/models/model_interact_d.28.5_m.0.2.300.0_a.01.5.0_ndisk_N.050000.pkl', 'rb'))
+    ind_mdisk = (np.abs(mdisk['cg'].z)>2*u.kpc) & (mdisk['cg'].spherical.distance<15*u.kpc) & (mdisk['cg'].spherical.distance>5*u.kpc)
+    ind_mhalo = (mhalo['lz']<0) & (np.abs(mhalo['cg'].z)>2*u.kpc) & (mhalo['cg'].spherical.distance<20*u.kpc) & (mhalo['cg'].spherical.distance>5*u.kpc)
+    
+    ebins = np.linspace(-0.18,-0.07,100)
+    ebins = np.linspace(-0.16,-0.08,100)
+    eridge = np.array([-0.145, -0.134, -0.127, -0.122, -0.116, -0.107, -0.098])
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(12,8), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.hist(etot[ind_disk].value, bins=ebins, density=True, histtype='stepfilled', alpha=0.3, label='H3 disk (0.3<circ<0.7)')
+    plt.hist(mdisk['etot'][ind_mdisk], color='darkorange', bins=ebins, density=True, histtype='step', alpha=0.4, label='Model disk (scaled N21 disk)')
+
+    plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+    plt.legend(fontsize='small', frameon=False, handlelength=0.5, loc=1)
+    
+    plt.sca(ax[1])
+    plt.hist(etot[ind_halo].value, bins=ebins, density=True, histtype='stepfilled', alpha=0.3, label='H3 halo (0.7<ecc<0.9)')
+    plt.hist(mhalo['etot'][ind_mhalo], color='darkorange', bins=ebins, density=True, histtype='step', alpha=0.4, label='Model halo (N21 GSE)')
+    
+    plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+    plt.legend(fontsize='small', frameon=False, handlelength=0.5, loc=1)
+    
+    for i in range(2):
+        plt.sca(ax[i])
+        for k, e in enumerate(eridge):
+            plt.axvline(e, lw=0.5, alpha=1, color='navy', ls=':')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/ehist_disk_halo_snr.{:d}_model_d.{:.1f}.png'.format(snr, d))
+
 
 def elz_hist(snr=3, tracer='giants', weight=False):
     """"""
@@ -625,7 +767,7 @@ def elz_hist(snr=3, tracer='giants', weight=False):
         w = np.ones(N)
     
     #2D histogram
-    Nbin = 3000
+    Nbin = 500
     be_lz = np.linspace(-6, 6, Nbin)
     be_etot = np.linspace(-0.18, -0.02, Nbin)
     
@@ -634,7 +776,7 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     
     detot = be_etot[1] - be_etot[0]
     dlz = be_lz[1] - be_lz[0]
-    sigma_smooth = (sigma_etot/detot, sigma_lz/dlz)
+    sigma_smooth = np.array([sigma_etot/detot, sigma_lz/dlz]) * 0.5
     print(sigma_smooth)
     
     h_smooth = ndimage.gaussian_filter(h, sigma_smooth)
@@ -645,7 +787,7 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     
     # colorbar scaling
     if tracer=='giants':
-        vmax = 2e-3
+        vmax = 1
     else:
         vmax = None
     
@@ -654,6 +796,7 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     
     plt.sca(ax[0])
     plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
+    #plt.imshow(h.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
     
     plt.xlim(-6,6)
     plt.ylim(-0.18, -0.02)
@@ -2253,6 +2396,7 @@ def elz_feathers():
     t = Table.read('../data/rcat_giants.fits')
 
     eridge = np.array([-0.1475, -0.1324, -0.1262, -0.1194, -0.1120, -0.0964])
+    eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
     N = np.size(eridge)
     cridge = [mpl.cm.magma(x/N) for x in range(N)]
     
@@ -2268,8 +2412,8 @@ def elz_feathers():
     
     plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=1.5, mew=0, alpha=0.3, zorder=1)
     
-    for k, e in enumerate(eridge):
-        plt.axhline(e, color=cridge[k], lw=0.5, zorder=0, alpha=0.5)
+    #for k, e in enumerate(eridge):
+        #plt.axhline(e, color=cridge[k], lw=0.5, zorder=0, alpha=0.5)
     
     plt.xlim(-6,6)
     plt.ylim(-0.18, -0.02)

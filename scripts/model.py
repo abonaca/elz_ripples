@@ -7,6 +7,7 @@ import astropy.units as u
 import astropy.coordinates as coord
 from astropy.io import fits
 from astropy.coordinates.matrix_utilities import rotation_matrix
+from astropy.constants import G
 
 import gala.coordinates as gc
 import gala.potential as gp
@@ -15,7 +16,12 @@ from gala.units import galactic
 from gala.dynamics.nbody import DirectNBody
 import gala.integrate as gi
 
-ham = gp.Hamiltonian(gp.MilkyWayPotential())
+import interact3 as interact
+
+#ham = gp.Hamiltonian(gp.MilkyWayPotential())
+mwpot = gp.load('/home/ana/data/MilkyWayPotential2022.yml')
+ham = gp.Hamiltonian(mwpot)
+
 
 import scipy.stats
 from scipy.stats import gaussian_kde
@@ -30,9 +36,12 @@ from fractions import Fraction
 import time
 
 import readsnap
+import agama
+from configparser import RawConfigParser
 
 coord.galactocentric_frame_defaults.set('v4.0')
 gc_frame = coord.Galactocentric()
+solarRadius = gc_frame.galcen_distance.value
 
 
 def initialize_idisk(ret=True, graph=False, Ntot=1000, Nr=20, seed=193, sigma_z=0*u.kpc, sigma_vz=0*u.km/u.s, verbose=False):
@@ -515,6 +524,88 @@ def initialize_td(Nrand=50000, seed=2924, ret=True, graph=False):
         return c[ind]
 
 
+###########
+# Nbody GSE
+
+def initialize_nhalo(Nrand=50000, seed=2572, ret=True, graph=False):
+    """"""
+    
+    th = Table.read('/home/ana/data/gse/gse_stars.fits')
+    eta = 1.
+    eta_x = 1.
+    eta_v = 1.
+    
+    call = coord.Galactocentric(x=eta_x*th['X']*u.kpc, y=eta_x*th['Y']*u.kpc, z=eta_x*th['Z']*u.kpc, v_x=eta_v*th['Vx']*u.km/u.s, v_y=eta_v*th['Vy']*u.km/u.s, v_z=eta_v*th['Vz']*u.km/u.s)
+    
+    # select stars with high energy
+    w0 = gd.PhaseSpacePosition(call.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0]
+    ind_highe = etot>-0.18*u.kpc**2*u.Myr**-2
+    call = call[ind_highe]
+    
+    ## H3 selection function
+    #cgal = call.transform_to(coord.Galactic())
+    #ind_h3 = (np.abs(cgal.b)>20*u.deg) & (cgal.distance>2*u.kpc)
+    ##ind_h3 = (cgal.distance>2*u.kpc)
+    #call = call[ind_h3]
+    
+    # pick randomly Nrand stars
+    np.random.seed(seed)
+    Ntot = np.size(call.x)
+    ind = np.arange(0, Ntot, 1, dtype=int)
+    if Nrand<Ntot:
+        ind_rand = np.random.choice(ind, size=Nrand, replace=False)
+    else:
+        ind_rand = ind
+    c = call[ind_rand]
+    
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0].value
+    lz = orbit.angular_momentum()[2][0]
+    
+    if graph:
+        print(np.sum((etot>-0.16) & (etot<-0.06)))
+        print(np.sum(etot<0))
+        
+        t = Table.read('../data/rcat_giants.fits')
+        ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
+        ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) #& (t['SNR']>5) # & (t['FeH']<-1)
+        #t = t[ind_gse]
+        
+        #ebins = np.linspace(-0.30,-0.02,200)
+        ebins = np.linspace(-0.16,-0.06,100)
+        
+        plt.close()
+        fig, ax = plt.subplots(1,2,figsize=(10,5))
+        
+        plt.sca(ax[0])
+        plt.plot(lz, etot, 'k.', ms=3, alpha=0.1, mew=0, zorder=0)
+        plt.plot(t['Lz'], t['E_tot_pot1'], 'o', color='tab:orange', zorder=0, ms=1, alpha=0.1)
+        
+        plt.xlim(-6,6)
+        plt.ylim(-0.3, -0.02)
+        plt.ylim(-0.18, -0.02)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+        plt.sca(ax[1])
+        #plt.hist(lz.value, bins=100, density=True, label='Model')
+        plt.hist(etot, bins=ebins, density=True, label='Model')
+        plt.hist(t['E_tot_pot1'][ind_gse], bins=ebins, density=True, histtype='step', label='H3', lw=1)
+        
+        plt.legend(fontsize='small')
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+    
+        plt.tight_layout()
+        plt.savefig('../plots/initialize_nhalo_phase.png')
+    
+    if ret:
+        ind = etot<0
+        return c[ind]
+
 
 ##################
 # Equilibrium disk
@@ -524,25 +615,12 @@ def nbody_disk():
     filename = '../data/snap_010'
     
     posbulge = readsnap.read_block(filename, 'POS ', parttype=3) # load positions of halo particles
-    velbulge = readsnap.read_block(filename, 'VEL ', parttype=3) # load positions of halo particles
+    velbulge = readsnap.read_block(filename, 'VEL ', parttype=3) # load velocities of halo particles
     idbulge = readsnap.read_block(filename, 'ID  ', parttype=3) # load IDs of halo particles
     
-    #poshalo = readsnap.read_block(filename, 'POS ', parttype=1) # load positions of halo particles
-    #velhalo = readsnap.read_block(filename, 'VEL ', parttype=1) # load positions of halo particles
-    #idhalo = readsnap.read_block(filename, 'ID  ', parttype=1) # load IDs of halo particles
-    ##poshalo = poshalo[np.argsort(idhalo)]
-    ##velhalo = velhalo[np.argsort(idhalo)]
-    ##idhalo = np.sort(idhalo)
-    
-    #poshalo = poshalo - np.mean(posbulge, axis=0)
-    #velhalo = velhalo - np.mean(velbulge, axis=0)
-    
     posdisk = readsnap.read_block(filename, 'POS ', parttype=2) # load positions of disk particles
-    veldisk = readsnap.read_block(filename, 'VEL ', parttype=2) # load positions of disk particles
+    veldisk = readsnap.read_block(filename, 'VEL ', parttype=2) # load velocities of disk particles
     iddisk = readsnap.read_block(filename, 'ID  ', parttype=2) # load IDs of disk particles
-    #posdisk = poshalo[np.argsort(iddisk)]
-    #veldisk = velhalo[np.argsort(iddisk)]
-    #iddisk = np.sort(iddisk)
     
     posdisk = posdisk - np.mean(posbulge, axis=0)
     veldisk = veldisk - np.mean(velbulge, axis=0)
@@ -552,6 +630,9 @@ def nbody_disk():
     
     outdict = dict(x=posdisk, v=veldisk)
     pickle.dump(outdict, open('../data/thick_disk.pkl', 'wb'))
+    
+    plt.close()
+    plt.figure()
 
 def plot_td():
     """"""
@@ -561,7 +642,7 @@ def plot_td():
     fig, ax = plt.subplots(1,2,figsize=(10,5))
     
     plt.sca(ax[0])
-    plt.plot(td['x'][:,0], td['x'][:,1], 'k.', mew=0, alpha=0.1, ms=2)
+    plt.scatter(td['x'][:,0], td['x'][:,1], c=td['v'][:,1])
     plt.xlabel('X [kpc]')
     plt.ylabel('Y [kpc]')
     plt.gca().set_aspect('equal')
@@ -579,10 +660,35 @@ def initialize_ndisk(Nrand=50000, seed=2572, ret=True, graph=False):
     """Draw particles from N21 disk"""
     
     td = pickle.load(open('../data/thick_disk.pkl', 'rb'))
+    eta = 1.4
+    eta_x = 2.5
+    eta_v = 1.6
     
-    c = coord.Galactocentric(x=td['x'][:,0], y=td['x'][:,1], z=td['x'][:,2], v_x=td['v'][:,0], v_y=td['v'][:,1], v_z=td['v'][:,2])
+    #call = coord.Galactocentric(x=-1*td['x'][:,0]*u.kpc, y=td['x'][:,1]*u.kpc, z=td['x'][:,2]*u.kpc, v_x=-1*eta*td['v'][:,0]*u.km/u.s, v_y=eta*td['v'][:,1]*u.km/u.s, v_z=eta*td['v'][:,2]*u.km/u.s)
+    call = coord.Galactocentric(x=-1*eta_x*td['x'][:,0]*u.kpc, y=eta_x*td['x'][:,1]*u.kpc, z=eta_x*td['x'][:,2]*u.kpc, v_x=-1*eta_v*td['v'][:,0]*u.km/u.s, v_y=eta_v*td['v'][:,1]*u.km/u.s, v_z=eta_v*td['v'][:,2]*u.km/u.s)
+    
+    # select stars with high energy
+    w0 = gd.PhaseSpacePosition(call.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0]
+    ind_highe = etot>-0.18*u.kpc**2*u.Myr**-2
+    call = call[ind_highe]
+    
+    ## H3 selection function
+    #cgal = call.transform_to(coord.Galactic())
+    #ind_h3 = (np.abs(cgal.b)>20*u.deg) & (cgal.distance>2*u.kpc)
+    ##ind_h3 = (cgal.distance>2*u.kpc)
+    #call = call[ind_h3]
+    
+    # pick randomly Nrand stars
     np.random.seed(seed)
-    
+    Ntot = np.size(call.x)
+    ind = np.arange(0, Ntot, 1, dtype=int)
+    if Nrand<Ntot:
+        ind_rand = np.random.choice(ind, size=Nrand, replace=False)
+    else:
+        ind_rand = ind
+    c = call[ind_rand]
     
     w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
     orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
@@ -596,25 +702,28 @@ def initialize_ndisk(Nrand=50000, seed=2572, ret=True, graph=False):
         t = Table.read('../data/rcat_giants.fits')
         ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
         ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>5) # & (t['FeH']<-1)
-        t = t[ind_disk]
+        #t = t[ind_disk]
         
-        ebins = np.linspace(-0.20,-0.02,200)
+        ebins = np.linspace(-0.30,-0.02,200)
         #ebins = np.linspace(-0.16,-0.06,50)
         
         plt.close()
         fig, ax = plt.subplots(1,2,figsize=(10,5))
         
         plt.sca(ax[0])
-        plt.plot(lz, etot, 'k.', ms=1, alpha=0.1)
+        plt.plot(lz, etot, 'k.', ms=3, alpha=0.1, mew=0, zorder=0)
+        plt.plot(t['Lz'], t['E_tot_pot1'], 'o', color='tab:orange', zorder=0, ms=1, alpha=0.1)
         
-        plt.xlim(-8,2)
-        plt.ylim(-0.2, -0.02)
+        plt.xlim(-6,6)
+        plt.ylim(-0.3, -0.02)
+        plt.ylim(-0.18, -0.02)
         plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
         plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
         plt.sca(ax[1])
+        #plt.hist(lz.value, bins=100, density=True, label='Model')
         plt.hist(etot, bins=ebins, density=True, label='Model')
-        #plt.hist(t['E_tot_pot1'], bins=ebins, density=True, histtype='step', label='H3', lw=2)
+        plt.hist(t['E_tot_pot1'][ind_disk], bins=ebins, density=True, histtype='step', label='H3', lw=2)
         
         plt.legend(fontsize='small')
         plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
@@ -626,6 +735,424 @@ def initialize_ndisk(Nrand=50000, seed=2572, ret=True, graph=False):
     if ret:
         ind = etot<0
         return c[ind]
+
+# from agama
+# display some information after each iteration
+def printoutInfo(model, iteration):
+    densDisk = model.components[0].getDensity()
+    #densBulge= model.components[1].getDensity()
+    #densHalo = model.components[2].getDensity()
+    pt0 = (solarRadius, 0, 0)
+    pt1 = (solarRadius, 0, 1)
+    print("Disk total mass=%g Msun, rho(Rsolar,z=0)=%g, rho(Rsolar,z=1kpc)=%g Msun/pc^3" % \
+        (densDisk.totalMass(), densDisk.density(pt0)*1e-9, densDisk.density(pt1)*1e-9))  # per pc^3, not kpc^3
+    #print("Halo total mass=%g Msun, rho(Rsolar,z=0)=%g, rho(Rsolar,z=1kpc)=%g Msun/pc^3" % \
+        #(densHalo.totalMass(), densHalo.density(pt0)*1e-9, densHalo.density(pt1)*1e-9))
+    print("Potential at origin=-(%g km/s)^2, total mass=%g Msun" % \
+        ((-model.potential.potential(0,0,0))**0.5, model.potential.totalMass()))
+    densDisk.export ("dens_disk_" +iteration);
+    #densBulge.export("dens_bulge_"+iteration);
+    #densHalo.export ("dens_halo_" +iteration);
+    model.potential.export("potential_"+iteration);
+    #writeRotationCurve("rotcurve_"+iteration, (model.potential[1],  # disk potential (CylSpline)
+        #agama.Potential(type='Multipole', lmax=6, density=densBulge),        # -"- bulge
+        #agama.Potential(type='Multipole', lmax=6, density=densHalo) ) )      # -"- halo
+
+def agama_disk():
+    """Set up a self-consistent disk with agama"""
+    
+    iniPotenThickDisk = dict(
+        type = 'Disk',
+        surfaceDensity = 3.0e+8,
+        scaleRadius = 2.1,
+        scaleHeight = -0.7
+        )
+    
+    iniDFThickDisk = dict(
+        type = 'Exponential',
+        mass = .95e10,
+        Jr0 = 63,
+        Jz0 = 30,
+        Jphi0 = 400,
+        pr = 0.13,
+        pz = 0.05,
+        addJden = 20,
+        addJvel = 40)
+    
+    ### parameters of the bulge+disk+stellar halo component of self-consistent model
+    # definition of grid in cylindrical radius - radii in kpc
+    iniSCMDisk = dict(
+        RminCyl = 0.1,
+        RmaxCyl = 30,
+        sizeRadialCyl = 20,
+        # definition of grid in vertical direction
+        zminCyl = 0.05,
+        zmaxCyl = 10,
+        sizeVerticalCyl= 16,
+        )
+    
+
+    ### parameters for the potential solvers for the entire self-consistent model
+    # definition of spherical grid for constructing multipole potential expansion;
+    # this grid should encompass that of the halo component, but also should resolve
+    # the bulge density profile at small radii; meaning of parameters is the same
+    iniSCM = dict(
+        rminSph = 0.01,
+        rmaxSph = 1000.,
+        sizeRadialSph = 50,
+        lmaxAngularSph = 4,
+        RminCyl = 0.1,
+        RmaxCyl = 50,
+        sizeRadialCyl = 30,
+        zminCyl = 0.04,
+        zmaxCyl = 20,
+        sizeVerticalCyl = 30,
+        useActionInterpolation = False
+        )
+    
+    # define external unit system describing the data (including the ini parameters)
+    agama.setUnits(length=1, velocity=1, mass=1)   # in Kpc, km/s, Msun
+    
+    # initialize the SelfConsistentModel object (only the potential expansion parameters)
+    model = agama.SelfConsistentModel(**iniSCM)
+
+    # create initial ('guessed') density profiles of all components
+    #densityBulge       = agama.Density(**iniPotenBulge)
+    #densityDarkHalo    = agama.Density(**iniPotenDarkHalo)
+    #densityThinDisk    = agama.Density(**iniPotenThinDisk)
+    densityThickDisk   = agama.Density(**iniPotenThickDisk)
+    #densityGasDisk     = agama.Density(**iniPotenGasDisk)
+    #densityStellarDisk = agama.Density(densityThinDisk, densityThickDisk)  # composite
+    #densityStellarDisk = agama.Density(densityThickDisk)  # composite
+    densityStellarDisk = densityThickDisk
+
+    # add components to SCM - at first, all of them are static density profiles
+    model.components.append(agama.Component(density=densityStellarDisk, disklike=True))
+    #model.components.append(agama.Component(density=densityBulge,       disklike=False))
+    #model.components.append(agama.Component(density=densityDarkHalo,    disklike=False))
+    #model.components.append(agama.Component(density=densityGasDisk,     disklike=True))
+
+    # compute the initial potential
+    model.iterate()
+    printoutInfo(model, 'init')
+    
+    Gpot=agama.GalaPotential(ham.potential)
+    
+    dfThickDisk = agama.DistributionFunction(potential=Gpot, **iniDFThickDisk)
+    #dfStellar = agama.DistributionFunction(dfThinDisk, dfThickDisk, dfStellarHalo)
+    dfStellar = dfThickDisk
+    model.components[0] = agama.Component(df=dfStellar, disklike=True, **iniSCMDisk)
+    
+    xv = agama.GalaxyModel(potential=model.potential, df=dfThickDisk, af=model.af).sample(20000)[0]
+    
+    cgal = coord.Galactocentric(x=xv[:,0]*u.kpc, y=xv[:,1]*u.kpc, z=xv[:,2]*u.kpc, v_x=xv[:,3]*u.km/u.s, v_y=xv[:,4]*u.km/u.s, v_z=xv[:,5]*u.km/u.s)
+    cg = cgal.transform_to(coord.Galactic())
+    ind_h3 = (np.abs(cg.b)>30*u.deg) & (cg.distance>2*u.kpc)
+    print(np.sum(ind_h3))
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2,figsize=(12,6))
+    
+    plt.sca(ax[0])
+    #plt.plot(xv[:,0], xv[:,1], 'k.')
+    #plt.gca().set_aspect('equal', adjustable='datalim')
+    plt.hist(cgal.cylindrical.rho.value, bins=np.linspace(0,50,30), log=True)
+    
+    plt.sca(ax[1])
+    #plt.plot(xv[:,0], xv[:,2], 'k.')
+    #plt.gca().set_aspect('equal', adjustable='datalim')
+    plt.hist(cgal.z.value, bins=np.linspace(0,10,30), log=True)
+    
+    plt.tight_layout()
+
+def agama_model():
+    """Agama model for the entire Milky Way"""
+    
+    iniFileName = "../data/SCM_MW.ini"
+    ini = RawConfigParser()
+    ini.optionxform=str  # do not convert key to lowercase
+    ini.read(iniFileName)
+    iniPotenThinDisk = dict(ini.items("Potential thin disk"))
+    iniPotenThickDisk= dict(ini.items("Potential thick disk"))
+    iniPotenGasDisk  = dict(ini.items("Potential gas disk"))
+    iniPotenBulge    = dict(ini.items("Potential bulge"))
+    iniPotenDarkHalo = dict(ini.items("Potential dark halo"))
+    iniDFThinDisk    = dict(ini.items("DF thin disk"))
+    iniDFThickDisk   = dict(ini.items("DF thick disk"))
+    iniDFStellarHalo = dict(ini.items("DF stellar halo"))
+    iniDFDarkHalo    = dict(ini.items("DF dark halo"))
+    iniDFBulge       = dict(ini.items("DF bulge"))
+    iniSCMHalo       = dict(ini.items("SelfConsistentModel halo"))
+    iniSCMBulge      = dict(ini.items("SelfConsistentModel bulge"))
+    iniSCMDisk       = dict(ini.items("SelfConsistentModel disk"))
+    iniSCM           = dict(ini.items("SelfConsistentModel"))
+    solarRadius      = ini.getfloat("Data", "SolarRadius")
+
+    # define external unit system describing the data (including the parameters in INI file)
+    agama.setUnits(length=1, velocity=1, mass=1)   # in Kpc, km/s, Msun
+
+    # initialize the SelfConsistentModel object (only the potential expansion parameters)
+    model = agama.SelfConsistentModel(**iniSCM)
+
+    # create initial ('guessed') density profiles of all components
+    densityBulge       = agama.Density(**iniPotenBulge)
+    densityDarkHalo    = agama.Density(**iniPotenDarkHalo)
+    densityThinDisk    = agama.Density(**iniPotenThinDisk)
+    densityThickDisk   = agama.Density(**iniPotenThickDisk)
+    densityGasDisk     = agama.Density(**iniPotenGasDisk)
+    densityStellarDisk = agama.Density(densityThinDisk, densityThickDisk)  # composite
+
+    # add components to SCM - at first, all of them are static density profiles
+    model.components.append(agama.Component(density=densityStellarDisk, disklike=True))
+    model.components.append(agama.Component(density=densityBulge,       disklike=False))
+    model.components.append(agama.Component(density=densityDarkHalo,    disklike=False))
+    model.components.append(agama.Component(density=densityGasDisk,     disklike=True))
+
+    # compute the initial potential
+    model.iterate()
+    printoutInfo(model, "init")
+
+    print("\033[1;33m**** STARTING MODELLING ****\033[0m\nInitial masses of density components: " \
+        "Mdisk=%g Msun, Mbulge=%g Msun, Mhalo=%g Msun, Mgas=%g Msun" % \
+        (densityStellarDisk.totalMass(), densityBulge.totalMass(), \
+        densityDarkHalo.totalMass(), densityGasDisk.totalMass()))
+
+    # create the dark halo DF
+    dfHalo  = agama.DistributionFunction(potential=model.potential, **iniDFDarkHalo)
+    # same for the bulge
+    dfBulge = agama.DistributionFunction(potential=model.potential, **iniDFBulge)
+    # same for the stellar components (thin/thick disks and stellar halo)
+    dfThinDisk    = agama.DistributionFunction(potential=model.potential, **iniDFThinDisk)
+    dfThickDisk   = agama.DistributionFunction(potential=model.potential, **iniDFThickDisk)
+    dfStellarHalo = agama.DistributionFunction(potential=model.potential, **iniDFStellarHalo)
+    # composite DF of all stellar components except the bulge
+    dfStellar     = agama.DistributionFunction(dfThinDisk, dfThickDisk, dfStellarHalo)
+    # composite DF of all stellar components including the bulge
+    dfStellarAll  = agama.DistributionFunction(dfThinDisk, dfThickDisk, dfStellarHalo, dfBulge)
+
+    # replace the disk, halo and bulge SCM components with the DF-based ones
+    model.components[0] = agama.Component(df=dfStellar, disklike=True, **iniSCMDisk)
+    model.components[1] = agama.Component(df=dfBulge, disklike=False, **iniSCMBulge)
+    model.components[2] = agama.Component(df=dfHalo,  disklike=False, **iniSCMHalo)
+
+    # we can compute the masses even though we don't know the density profile yet
+    print("Masses of DF components: " \
+        "Mdisk=%g Msun (Mthin=%g, Mthick=%g, Mstel.halo=%g); Mbulge=%g Msun; Mdarkhalo=%g Msun" % \
+        (dfStellar.totalMass(), dfThinDisk.totalMass(), dfThickDisk.totalMass(), \
+        dfStellarHalo.totalMass(), dfBulge.totalMass(), dfHalo.totalMass()))
+
+    # do a few more iterations to obtain the self-consistent density profile for the entire system
+    for iteration in range(5):
+        print("\033[1;37mStarting iteration #{:d}\033[0m".format(iteration+1))
+        model.iterate()
+        printoutInfo(model, "iter {:d}".format(iteration+1))
+
+    # Sample 
+    xv = agama.GalaxyModel(potential=model.potential, df=dfStellar, af=model.af).sample(2000)[0]
+    cgal = coord.Galactocentric(x=-1*xv[:,0]*u.kpc, y=xv[:,1]*u.kpc, z=xv[:,2]*u.kpc, v_x=-1*xv[:,3]*u.km/u.s, v_y=xv[:,4]*u.km/u.s, v_z=xv[:,5]*u.km/u.s)
+    
+    print(cgal)
+    
+    w0 = gd.PhaseSpacePosition(cgal.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0].value
+    lz = orbit.angular_momentum()[2][0]
+    
+    print(np.sum((etot>-0.16) & (etot<-0.06)))
+    print(np.sum(etot<0))
+    
+    t = Table.read('../data/rcat_giants.fits')
+    ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
+    ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>5) # & (t['FeH']<-1)
+    
+    ebins = np.linspace(-0.30,-0.02,200)
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2,figsize=(10,5))
+    
+    plt.sca(ax[0])
+    plt.plot(lz, etot, 'k.', ms=3, alpha=0.1, mew=0, zorder=0)
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'o', color='tab:orange', zorder=0, ms=1, alpha=0.1)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.3, -0.02)
+    #plt.ylim(-0.18, -0.02)
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+
+    plt.sca(ax[1])
+    #plt.hist(lz.value, bins=100, density=True, label='Model')
+    plt.hist(etot, bins=ebins, density=True, label='Model')
+    plt.hist(t['E_tot_pot1'][ind_disk], bins=ebins, density=True, histtype='step', label='H3', lw=2)
+    
+    plt.legend(fontsize='small')
+    plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+
+    plt.tight_layout()
+
+    ## output various profiles (only for stellar components)
+    #print("\033[1;33mComputing density profiles and velocity distribution\033[0m")
+    #modelStars = agama.GalaxyModel(model.potential, dfStellar, model.af)
+
+def initialize_adisk(Nrand=50000, seed=2572, ret=True, graph=False):
+    """Sample a thick disk distribution function with agama"""
+    
+    iniPotenThickDisk = dict(
+        type = 'Disk',
+        surfaceDensity = 3.0e+8,
+        scaleRadius = 2.1,
+        scaleHeight = -0.7
+        )
+    
+    iniDFThickDisk = dict(
+        type = 'Exponential',
+        mass = .95e10,
+        Jr0 = 63,
+        Jz0 = 20,
+        Jphi0 = 300,
+        pr = 0.13,
+        pz = 0.05,
+        addJden = 20,
+        addJvel = 40)
+    
+    iniDFThickDisk = dict(
+        type = 'Exponential',
+        mass    = 1e10,
+        ## Parameters with dimensions of action [kpc*km/s]
+        # scale action setting the radial velocity dispersion (~ .5*<Vr^2>/kappa)
+        Jr0     = 22,
+        # scale action setting the disk thickness and the vertical velocity dispersion ~(Vc*h)
+        Jz0     = 5,
+        # scale action setting the disk radius (~Rd*Vc)
+        Jphi0   = 550,
+        # power that controls radial decrease of dispersions
+        pr	= -.25,
+        pz	= -.1,
+        # additional contribution to the sum of actions that affects the density profile
+        addJden = 10,
+        # same for the part that affects the velocity dispersion profiles
+        addJvel = 700)
+        
+    ### parameters of the bulge+disk+stellar halo component of self-consistent model
+    iniSCMDisk = dict(
+        RminCyl = 0.1,
+        RmaxCyl = 30,
+        sizeRadialCyl = 20,
+        zminCyl = 0.05,
+        zmaxCyl = 10,
+        sizeVerticalCyl= 16,
+        )
+    
+    ### parameters for the potential solvers for the entire self-consistent model
+    iniSCM = dict(
+        rminSph = 0.01,
+        rmaxSph = 1000.,
+        sizeRadialSph = 50,
+        lmaxAngularSph = 4,
+        RminCyl = 0.1,
+        RmaxCyl = 50,
+        sizeRadialCyl = 30,
+        zminCyl = 0.04,
+        zmaxCyl = 20,
+        sizeVerticalCyl = 30,
+        useActionInterpolation = False
+        )
+    
+    # define external unit system describing the data (including the ini parameters)
+    agama.setUnits(length=1, velocity=1, mass=1)   # in Kpc, km/s, Msun
+    
+    # initialize the SelfConsistentModel object (only the potential expansion parameters)
+    model = agama.SelfConsistentModel(**iniSCM)
+
+    # create initial ('guessed') density profiles of all components
+    densityThickDisk = agama.Density(**iniPotenThickDisk)
+
+    # add components to SCM - at first, all of them are static density profiles
+    model.components.append(agama.Component(density=densityThickDisk, disklike=True))
+    
+    # compute the initial potential
+    model.iterate()
+    printoutInfo(model, 'init')
+    
+    Gpot=agama.GalaPotential(ham.potential)
+    
+    dfThickDisk = agama.DistributionFunction(potential=model.potential, **iniDFThickDisk)
+    model.components[0] = agama.Component(df=dfThickDisk, disklike=True, **iniSCMDisk)
+    
+    for iteration in range(1,6):
+        print("\033[1;37mStarting iteration #%d\033[0m" % iteration)
+        model.iterate()
+        printoutInfo(model, 'iter {:d}'.format(iteration))
+    
+    xv = agama.GalaxyModel(potential=model.potential, df=dfThickDisk, af=model.af).sample(Nrand*2)[0]
+    
+    cgal = coord.Galactocentric(x=-1*xv[:,0]*u.kpc, y=xv[:,1]*u.kpc, z=xv[:,2]*u.kpc, v_x=-1*xv[:,3]*u.km/u.s, v_y=xv[:,4]*u.km/u.s, v_z=xv[:,5]*u.km/u.s)
+    
+    ## select stars with high energy
+    #w0 = gd.PhaseSpacePosition(cgal.transform_to(gc_frame).cartesian)
+    #orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    #etot = orbit.energy()[0]
+    #ind_highe = etot>-0.18*u.kpc**2*u.Myr**-2
+    #cgal = cgal[ind_highe]
+    
+    ## pick randomly Nrand stars
+    #np.random.seed(seed)
+    #Ntot = np.size(cgal.x)
+    #print('highe', Ntot)
+    #ind = np.arange(0, Ntot, 1, dtype=int)
+    #if Nrand<Ntot:
+        #ind_rand = np.random.choice(ind, size=Nrand, replace=False)
+    #else:
+        #ind_rand = ind
+    #c = cgal[ind_rand]
+    
+    w0 = gd.PhaseSpacePosition(cgal.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0].value
+    lz = orbit.angular_momentum()[2][0]
+    
+    if graph:
+        print(np.sum((etot>-0.16) & (etot<-0.06)))
+        print(np.sum(etot<0))
+        
+        t = Table.read('../data/rcat_giants.fits')
+        ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
+        ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>5) # & (t['FeH']<-1)
+        #t = t[ind_disk]
+        
+        ebins = np.linspace(-0.30,-0.02,200)
+        #ebins = np.linspace(-0.16,-0.06,50)
+        
+        plt.close()
+        fig, ax = plt.subplots(1,2,figsize=(10,5))
+        
+        plt.sca(ax[0])
+        plt.plot(lz, etot, 'k.', ms=3, alpha=0.1, mew=0, zorder=0)
+        plt.plot(t['Lz'], t['E_tot_pot1'], 'o', color='tab:orange', zorder=0, ms=1, alpha=0.1)
+        
+        plt.xlim(-6,6)
+        plt.ylim(-0.3, -0.02)
+        #plt.ylim(-0.18, -0.02)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+        plt.sca(ax[1])
+        #plt.hist(lz.value, bins=100, density=True, label='Model')
+        plt.hist(etot, bins=ebins, density=True, label='Model')
+        plt.hist(t['E_tot_pot1'][ind_disk], bins=ebins, density=True, histtype='step', label='H3', lw=2)
+        
+        plt.legend(fontsize='small')
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+    
+        plt.tight_layout()
+        plt.savefig('../plots/initialize_adisk_phase.png')
+    
+    if ret:
+        ind = etot<0
+        return c[ind]
+
 
 ####################
 # Orbit integrations
@@ -922,6 +1449,10 @@ def evolve_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, mw_label='h
         c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)[iskip::Nskip]
     elif mw_label=='ndisk':
         c = initialize_ndisk(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='nhalo':
+        c = initialize_nhalo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='adisk':
+        c = initialize_adisk(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
     else:
         mw_label = 'td'
         c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
@@ -954,6 +1485,311 @@ def evolve_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, mw_label='h
     fout.close()
 
 
+def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo=5, mw_label='halo', Nrand=50000, seed=3928, Nskip=1, iskip=0, snap_skip=100, test=False, graph=True, verbose=True):
+    """
+    Initialize at apocenter
+    d - Sgr heliocentric distance (default 27 kpc, reasonable range: 24-28 kpc, Vasiliev)
+    m - Sgr Hernquist mass (default 1.4e10 Msun - H2, H1: 0.8e10 Msun, Laporte)
+    a - Sgr Hernquist scale radius (default 7 kpc - H2, alternatives H2 13kpc, H1 8,16kpc, Laporte)
+    """
+    
+    # initialize Sgr location
+    c_sgr = coord.ICRS(ra=283.76*u.deg, dec=-30.48*u.deg, distance=d, radial_velocity=142*u.km/u.s, pm_ra_cosdec=-2.7*u.mas/u.yr, pm_dec=-1.35*u.mas/u.yr)
+    cg_sgr = c_sgr.transform_to(coord.Galactocentric())
+    xp = np.array([cg_sgr.x.to(u.kpc).value, cg_sgr.y.to(u.kpc).value, cg_sgr.z.to(u.kpc).value]) * u.kpc
+    vp = np.array([cg_sgr.v_x.to(u.km/u.s).value, cg_sgr.v_y.to(u.km/u.s).value, cg_sgr.v_z.to(u.km/u.s).value]) * u.km/u.s
+
+    # Hernquist profile
+    potential_perturb = 2
+    par_perturb = np.array([m.si.value, a.si.value, 0., 0., 0.])
+    
+    #w1_sgr = gd.PhaseSpacePosition(c_sgr.transform_to(gc_frame).cartesian)
+    
+    ## find initial Sgr position
+    #dt = 0.5*u.Myr
+    #Tback = 10*u.Gyr
+    #Nback = int((Tback/dt).decompose())
+    #Napo = 5
+    
+    #sgr_orbit_back = ham.integrate_orbit(w1_sgr, dt=-dt, n_steps=Nback)
+    
+    ## extract position at a given apocenter
+    #apo, tapo = sgr_orbit_back.apocenter(func=None, return_times=True)
+    #ind_apo = np.argmin(np.abs(sgr_orbit_back.t - tapo[-Napo]))
+    #w0_sgr = sgr_orbit_back[ind_apo]
+    ##print("density", ham.potential['halo'].density(w1_sgr).si)
+    
+    ## calculate number of time steps to integrate forward
+    #ind = np.arange(Nback+1, dtype=int)
+    #Nfwd = ind[ind_apo]
+    ##print(tapo[-Napo], Nfwd)
+
+    # initialize star particles
+    if mw_label=='halo':
+        c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='idisk':
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)[iskip::Nskip]
+    elif mw_label=='ndisk':
+        c = initialize_ndisk(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='nhalo':
+        c = initialize_nhalo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='adisk':
+        c = initialize_adisk(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    else:
+        mw_label = 'td'
+        c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    
+    cg = c.transform_to(coord.Galactocentric())
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0].value
+    lz = orbit.angular_momentum()[2][0]
+    
+    if test:
+        print(xp, vp)
+        print(np.size(cg.x))
+        return 0
+    
+    
+    ##MilkyWayPotential
+    #Mh = 5.4e11*u.Msun
+    #Rh = 15.62*u.kpc
+    #Vh = np.sqrt(G*Mh/Rh).to(u.km/u.s)
+    #par_gal = [5e9*u.Msun, 1*u.kpc, 6.8e10*u.Msun, 3*u.kpc, 0.28*u.kpc, Vh, Rh, 0*u.rad, 1*u.Unit(1), 1*u.Unit(1), 1*u.Unit(1)]
+    
+    #MilkyWayPotential2022
+    Mh = 554271110519.767*u.Msun
+    Rh = 15.625903558190732*u.kpc
+    Vh = np.sqrt(G*Mh/Rh).to(u.km/u.s)
+    par_gal = [5e9*u.Msun, 1*u.kpc, 47716664286.85036*u.Msun, 3*u.kpc, 0.26*u.kpc, Vh, Rh, 0*u.rad, 1*u.Unit(1), 1*u.Unit(1), 1*u.Unit(1)]
+    
+    potential = 6
+    par_pot = np.array([x_.si.value for x_ in par_gal])
+    #print(ham.potential.parameters)
+    
+    dt = 0.5*u.Myr
+    T = 6*u.Gyr
+    #T = 2*u.Myr
+    
+    t1 = time.time()
+    x1, x2, x3, v1, v2, v3 = interact.df_interact(par_perturb, fm*m.si.value, fa*a.si.value, xp.to(u.m).value, vp.to(u.m/u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
+    t2 = time.time()
+    
+    if verbose:
+        print(t2 - t1)
+    
+    stars = {}
+    stars['x'] = (np.array([x1, x2, x3])*u.m).to(u.kpc)
+    stars['v'] = (np.array([v1, v2, v3])*u.m/u.s).to(u.km/u.s)
+    
+    cg_ = coord.Galactocentric(x=stars['x'][0], y=stars['x'][1], z=stars['x'][2], v_x=stars['v'][0], v_y=stars['v'][1], v_z=stars['v'][2])
+    w0_ = gd.PhaseSpacePosition(cg_.cartesian)
+    orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+    etot_ = orbit_.energy()[0].value
+    lz_ = orbit_.angular_momentum()[2][0]
+    
+    # save
+    outdict = dict(cg=cg_, etot=etot_, lz=lz_)
+    root = 'interact_d.{:.1f}_m.{:.1f}.{:.1f}_a.{:02.0f}.{:.1f}_{:s}_N.{:06d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
+    pickle.dump(outdict, open('../data/models/model_{:s}.pkl'.format(root), 'wb'))
+    
+    if graph:
+        # setup plotting
+        if 'halo' in mw_label:
+            elz_xlim = [-5,5]
+            elz_ylim = [-0.18, -0.04]
+            rvr_xlim = [1,100]
+            rvr_ylim = [-400,400]
+        elif 'disk' in mw_label:
+            elz_xlim = [-6,2]
+            elz_ylim = [-0.18, -0.04]
+            rvr_xlim = [1,30]
+            rvr_ylim = [-300,300]
+        else:
+            elz_xlim = [-6,6]
+            elz_ylim = [-0.18, -0.02]
+            rvr_xlim = [1,100]
+            rvr_ylim = [-400,400]
+        
+        # plot phase-space diagnostics
+        plt.close()
+        fig, ax = plt.subplots(2,2,figsize=(11,12), sharex='row', sharey='row')
+        
+        # E-Lz
+        plt.sca(ax[0,0])
+        plt.plot(lz, etot, 'ko', ms=1, mew=0, alpha=0.1)
+        plt.xlim(elz_xlim)
+        plt.ylim(elz_ylim)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        
+        plt.sca(ax[0,1])
+        plt.plot(lz_, etot_, 'ko', ms=1, mew=0, alpha=0.1)
+        eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+        for k, e in enumerate(eridge):
+            plt.axhline(e, lw=0.5, alpha=0.5)
+        #plt.xlim(-6,6)
+        #plt.ylim(-0.18, -0.02)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        #plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        
+        # r-Vr
+        plt.sca(ax[1,0])
+        plt.plot(cg.spherical.distance, cg.spherical.differentials['s'].d_distance, 'ko', ms=1, mew=0, alpha=0.1)
+        plt.xlim(rvr_xlim)
+        plt.ylim(rvr_ylim)
+        plt.ylabel('$V_r$ [km s$^{-1}$]')
+        plt.xlabel('r [kpc]')
+        
+        plt.sca(ax[1,1])
+        plt.plot(cg_.spherical.distance, cg_.spherical.differentials['s'].d_distance, 'ko', ms=1, mew=0, alpha=0.1)
+        #plt.xlim(1,100)
+        #plt.ylim(-400,400)
+        #plt.ylabel('$V_r$ [km s$^{-1}$]')
+        plt.xlabel('r [kpc]')
+        
+        plt.tight_layout()
+        plt.savefig('../plots/phasespace_{:s}.png'.format(root))
+
+
+def batch_interact():
+    """Run the C interaction code for a grid of input parameters"""
+    
+    d = np.linspace(26.6,28.6,11) * u.kpc
+    fm = np.linspace(10,20,11)
+    
+    fm = np.logspace(0,3,7)
+    print(fm)
+    d = np.linspace(26,29,7) * u.kpc
+    print(d)
+    
+def br():
+    for d_ in d:
+        for fm_ in fm:
+            print(d_, fm_)
+            interact_sgr_stars(mw_label='ndisk', Nrand=50000, m=2e10*u.Msun, d=d_, fm=fm_, graph=False, verbose=True)
+
+
+from colorio.cs import ColorCoordinates
+
+def grid_cmap():
+    """Develop a 2D colormap for plotting a grid of histograms"""
+    
+    x_ = np.linspace(0,1,100)
+    xx_, yy_ = np.meshgrid(x_, x_)
+    xx = np.ravel(xx_)
+    yy = np.ravel(yy_)
+    
+    # corners chosen to have the same S and L in HSL, and to be perceptually most distant
+    # v00 -- red, v10 -- blue, v01 -- orange, v11 -- teal
+    hex_corners = ['#f00070', '#0029f0', '#f0e200', '#00f0ef']
+    
+    # create colorio RGB color coordinates
+    corners = [ColorCoordinates(mpl.colors.to_rgb(x), 'srgb1') for x in hex_corners]
+    
+    # transfer corners to CIELAB color space
+    for c in corners:
+        c.convert('cielab')
+    
+    # create a list of colors based on their position in the xy plane using bilinear interpolation
+    colors = []
+    for i in range(np.size(xx)):
+        cval = (1 - xx[i])*(1 - yy[i])*corners[0].data + xx[i]*(1 - yy[i])*corners[1].data + (1 - xx[i])*yy[i]*corners[2].data + xx[i]*yy[i]*corners[3].data
+        c_ = ColorCoordinates(cval, 'cielab')
+        c_.convert('srgbhex', mode='clip')
+        colors += [np.array2string(c_.data)[1:-1]]
+    
+    plt.close()
+    plt.figure()
+    
+    plt.scatter(xx, yy, c=colors, s=50)
+
+    plt.xlim(0,1)
+    plt.ylim(0,1)
+    plt.axis('off')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/grid_cmap.png')
+    
+def get_2dcolor(x, y):
+    """"""
+    hex_corners = ['#f00070', '#0029f0', '#f0e200', '#00f0ef']
+    
+    # create colorio RGB color coordinates
+    corners = [ColorCoordinates(mpl.colors.to_rgb(x), 'srgb1') for x in hex_corners]
+    
+    # transfer corners to CIELAB color space
+    for c in corners:
+        c.convert('cielab')
+    
+    # bilinear interpolation to get the color based on its x,y position
+    cval = (1 - x)*(1 - y)*corners[0].data + x*(1 - y)*corners[1].data + (1 - x)*y*corners[2].data + x*y*corners[3].data
+    c_ = ColorCoordinates(cval, 'cielab')
+    c_.convert('srgbhex', mode='clip')
+    
+    return np.array2string(c_.data)[1:-1]
+    
+
+def ehist_grid():
+    """"""
+    
+    d_full = np.linspace(26.6,28.6,11) * u.kpc
+    fm_full = np.linspace(10,20,11)
+    mw_label = 'ndisk'
+    Nrand = 50000
+    m = 2e10*u.Msun
+    a = 1*u.kpc
+    fa = 5
+    
+    d_grid = d_full[::1]
+    fm_grid = fm_full[::1]
+    
+    nrow = np.size(d_grid)
+    ncol = np.size(fm_grid)
+    
+    xg = np.linspace(0,1,ncol)
+    yg = np.linspace(1,0,nrow)
+    xx_, yy_ = np.meshgrid(xg, yg)
+    #xx = xx_.ravel()
+    #yy = yy_.ravel()
+    
+    colors = []
+    for x, y in zip(xx_.ravel(), yy_.ravel()):
+        colors += [get_2dcolor(x, y)]
+    
+    ebins = np.linspace(-0.18,-0.07,100)
+    eridge = np.array([-0.145, -0.134, -0.127, -0.122, -0.116])
+    
+    plt.close()
+    fig, ax = plt.subplots(nrow, ncol, figsize=(20,20), sharex=True, sharey=True)
+    
+    for i, d in enumerate(d_grid):
+        for j, fm in enumerate(fm_grid):
+            ij = i*ncol + j
+            root = 'interact_d.{:.1f}_m.{:.1f}.{:.1f}_a.{:02.0f}.{:.1f}_{:s}_N.{:06d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
+            mdisk = pickle.load(open('../data/models/model_{:s}.pkl'.format(root), 'rb'))
+            ind_mdisk = (np.abs(mdisk['cg'].z)>2*u.kpc) & (mdisk['cg'].spherical.distance<15*u.kpc) & (mdisk['cg'].spherical.distance>5*u.kpc)
+
+            plt.sca(ax[i,j])
+            plt.hist(mdisk['etot'][ind_mdisk], color=colors[ij], bins=ebins, density=True, histtype='step', alpha=1)
+            
+            for k, e in enumerate(eridge):
+                plt.axvline(e, lw=0.5, alpha=1, color='k', ls=':')
+            
+            plt.text(0.97,0.97,'d={:.1f}\n$f_m$={:.0f}'.format(d, fm), transform=plt.gca().transAxes, ha='right', va='top', fontsize='x-small')
+    
+    for i in range(nrow):
+        plt.sca(ax[i,0])
+        plt.ylabel('Density')
+        
+    for i in range(ncol):
+        plt.sca(ax[ncol-1,i])
+        plt.xlabel('$E_{tot}$')
+    
+    plt.tight_layout(h_pad=0, w_pad=0)
+    plt.savefig('../plots/grid_d_fm.pdf')
+    
+
 
 def batch_run():
     """"""
@@ -974,11 +1810,12 @@ def batch_run():
 
 def batch_stars():
     """"""
-    Nskip = 8
-    distances = np.array([26.5,])
-    masses = np.array([5,])*1e10
-    sizes = np.array([2,])
-    comp = ['idisk']
+    Nrand = 100000
+    Nskip = 10
+    distances = np.array([26.25, 26.5, 26.75])
+    masses = np.array([1.4,])*1e10
+    sizes = np.array([1,])
+    comp = ['nhalo']
 
     for c in comp:
         for m in masses:
@@ -987,20 +1824,20 @@ def batch_stars():
                     print(c, m, d, s)
                     for i in range(Nskip):
                         t1 = time.time()
-                        evolve_sgr_stars(m=m*u.Msun, d=d*u.kpc, a=s*u.kpc, Napo=4, Nrand=40000, mw_label=c, Nskip=Nskip, iskip=i, snap_skip=100)
+                        evolve_sgr_stars(m=m*u.Msun, d=d*u.kpc, a=s*u.kpc, Nrand=Nrand, mw_label=c, Nskip=Nskip, iskip=i)
                         t2 = time.time()
                         print(i, t2-t1)
 
 def combine_skips():
     """"""
     # simulation setup
-    d = 26.5*u.kpc
-    m = 5e10*u.Msun
-    a = 2*u.kpc
-    Nskip = 8
-    Nrand = 40000
+    d = 26.75*u.kpc
+    m = 1.4e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 10
+    Nrand = 100000
     seed = 3928
-    mw_label = 'idisk'
+    mw_label = 'nhalo'
     
     #iskip = 0
     #Nskip = 8
@@ -1015,6 +1852,10 @@ def combine_skips():
         c = initialize_halo(Nrand=Nrand, seed=seed, ret=True, graph=False)
     elif mw_label=='idisk':
         c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)
+    elif mw_label=='ndisk':
+        c = initialize_ndisk(Nrand=Nrand, seed=seed, ret=True, graph=False)
+    elif mw_label=='nhalo':
+        c = initialize_nhalo(Nrand=Nrand, seed=seed, ret=True, graph=False)
     else:
         mw_label = 'td'
         c = initialize_td(Nrand=Nrand, seed=seed, ret=True, graph=False)
@@ -1081,16 +1922,18 @@ def combine_skips():
     fout.close()
 
 
+# First diagnostics
+
 def diagnose_elz():
     """"""
     
     # simulation setup
-    d = 26.5*u.kpc
-    m = 5e10*u.Msun
-    a = 2*u.kpc
-    Nskip = 8
-    Nrand = 40000
-    mw_label = 'idisk'
+    d = 26.75*u.kpc
+    m = 1.4e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 10
+    Nrand = 100000
+    mw_label = 'nhalo'
     
     root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
@@ -1116,9 +1959,12 @@ def diagnose_elz():
     e_fin = orbit.energy()[-1]
     lz_fin = orbit.angular_momentum()[2][-1]
     
-    #t = Table.read('../data/rcat_giants.fits')
-    #ind_gse = (t['eccen_pot1']>0.7) & (t['SNR']>5)
-    #t = t[ind_gse]
+    t = Table.read('../data/rcat_giants.fits')
+    if 'halo' in mw_label:
+        ind_h3 = (t['eccen_pot1']>0.7) & (t['SNR']>5)
+    else:
+        ind_h3 = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>10)
+    t = t[ind_h3]
     
     N = np.size(e_init)
     if N<10000:
@@ -1142,9 +1988,14 @@ def diagnose_elz():
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
     plt.sca(ax[1])
+    plt.plot(t['Lz']-2, t['E_tot_pot1'], 'ro', ms=1, mew=0, alpha=0.4)
     plt.plot(lz_fin, e_fin, 'ko', ms=ms, mew=0, alpha=alpha)
     plt.plot(lz_fin[0], e_fin[0], 'ro')
     
+    eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+    for k, e in enumerate(eridge):
+        plt.axhline(e, lw=0.5, alpha=0.5)
+        
     #plt.xlim(-2,2)
     #plt.ylim(-0.18,-0.08)
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
@@ -1156,23 +2007,23 @@ def diagnose_ehist():
     """"""
     
     # simulation setup
-    d = 27*u.kpc
+    d = 26.75*u.kpc
     m = 1.4e10*u.Msun
-    a = 7*u.kpc
+    a = 1*u.kpc
     Nskip = 10
-    Nrand = 50000
-    mw_label = 'td'
+    Nrand = 100000
+    mw_label = 'nhalo'
     
     root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
     
     iskip = 0
-    Nskip = 20
+    Nskip = 8
     Nrand = 50000
-    mw_label = 'halo'
-    m = 0.5e10*u.Msun
+    mw_label = 'ndisk'
+    m = 1e10*u.Msun
     omega = 41*u.km/u.s/u.kpc
-    root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.0'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/bar_{:s}.h5'.format(root)
     
     f = h5py.File(fname, 'r')
@@ -1185,12 +2036,12 @@ def diagnose_ehist():
     
     e_fin = orbit.energy()[-1]
     lz_fin = orbit.angular_momentum()[2][-1]
-    ind_pro = lz_fin.value<0
-    ind_retro = lz_fin.value>0
+    ind_pro = lz_fin.value<-0.5
+    ind_retro = lz_fin.value>0.5
     
     # H3
     t = Table.read('../data/rcat_giants.fits')
-    if mw_label=='halo':
+    if 'halo' in mw_label:
         ind = (t['eccen_pot1']>0.7) & (t['SNR']>5)
         fs = 15
     else:
@@ -1216,27 +2067,35 @@ def diagnose_ehist():
     
     
     bins = np.linspace(-0.2,-0.02,200)
-    bins = np.linspace(-0.16,-0.06,150)
+    bins = np.linspace(-0.16,-0.06,200)
+    bins = np.linspace(-0.18,-0.07,100)
+    
     bins_coarse = np.linspace(-0.2,-0.02,50)
     bins_fine = np.linspace(-0.2,-0.02,200)
     
     plt.close()
-    fig, ax = plt.subplots(2,1,figsize=(15,10), sharex=True, sharey=True)
+    fig, ax = plt.subplots(2,1,figsize=(15,10), sharex=True)
     
     plt.sca(ax[0])
     plt.hist(e_init.value, bins=bins, histtype='step', density=True, color='0.7', label='initial')
     plt.hist(e_fin.value, bins=bins, histtype='step', density=True, color='k', label='final')
-    plt.hist(t['E_tot_pot1'], bins=bins, histtype='step', density=True, color='r', label='H3 giants')
     
-    plt.legend(loc=2)
+    plt.legend(loc=1)
     plt.ylabel('Density')
     
     plt.sca(ax[1])
     
     plt.hist(e_fin.value[ind_pro], bins=bins, histtype='step', density=True, color='tab:red', label='prograde')
-    if mw_label=='halo':
-        plt.hist(e_fin.value[ind_retro], bins=bins, histtype='step', density=True, color='tab:blue', label='retrograde')
+    #if 'halo' in mw_label:
+        #plt.hist(e_fin.value[ind_retro], bins=bins, histtype='step', density=True, color='tab:blue', label='retrograde')
+    plt.hist(t['E_tot_pot1'], bins=bins, histtype='step', density=True, color='k', label='H3 giants')
     
+    eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+    for i in range(2):
+        plt.sca(ax[i])
+        for k, e in enumerate(eridge):
+            plt.axvline(e, lw=0.5, alpha=0.5)
+        
     #sigma_etot = np.median(t['E_tot_pot1_err']) * fs
     #kde = gaussian_kde(t['E_tot_pot1'], bw_method=sigma_etot)
     #x = np.linspace(-0.2,-0.02,10000)
@@ -1249,7 +2108,7 @@ def diagnose_ehist():
         #y = kde(x)
         #plt.plot(x, y, '-', label='Model {:d}'.format(i))
     
-    plt.legend(loc=2)
+    plt.legend(loc=1)
     plt.ylabel('Density')
     plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
@@ -1262,12 +2121,13 @@ def diagnose_periods():
     """"""
     
     # simulation setup
-    d = 26.5*u.kpc
-    m = 5e10*u.Msun
-    a = 2*u.kpc
-    Nskip = 8
-    Nrand = 40000
-    mw_label = 'idisk'
+    d = 26.75*u.kpc
+    m = 1.4e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 10
+    Nrand = 100000
+    mw_label = 'nhalo'
+    
     root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
     fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
     
@@ -1285,7 +2145,12 @@ def diagnose_periods():
     f.close()
     
     c = coord.Galactocentric(x=orbit.pos.x[-1]*u.kpc, y=orbit.pos.y[-1]*u.kpc, z=orbit.pos.z[-1]*u.kpc, v_x=orbit.vel.d_x[-1]*u.kpc/u.Myr, v_y=orbit.vel.d_y[-1]*u.kpc/u.Myr, v_z=orbit.vel.d_z[-1]*u.kpc/u.Myr)
-    w0 = gd.PhaseSpacePosition(c.cartesian[::20])
+
+    if (np.size(c.x)>10001):
+        skip = 5
+    else:
+        skip = 1
+    w0 = gd.PhaseSpacePosition(c.cartesian[::skip])
     
     dt = 1*u.Myr
     Nback = 3000
@@ -1305,18 +2170,29 @@ def diagnose_periods():
     
     periods = orbit_fid[:,ind_tangential].estimate_period(radial=True)
     
+    t = Table.read('../data/rcat_giants.fits')
+    if 'halo' in mw_label:
+        ind = (t['eccen_pot1']>0.7) & (t['SNR']>20)
+    else:
+        ind = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
+    
+    bins = np.logspace(np.log10(75), np.log10(1020), 120)
+    
     plt.close()
     plt.figure(figsize=(12,6))
     
-    bins = np.logspace(np.log10(75), np.log10(1020), 200)
-    plt.hist(periods.value, bins=bins, histtype='step')
+    plt.hist(periods.value, bins=bins, histtype='step', density=False)
+    plt.hist(t['orbit_period_pot1'][ind], bins=bins, histtype='step', density=False)
     
-    for fr in [1, 2/3, 1/2, 2/7, 1/5, 1/8]:
+    pres = np.array([1, 1/2., 1/3., 1/4., 1/5., 1/6., 1/7., 1/8., 1/9., 1/10.])
+    for fr in pres:
         plt.axvline(periods.value[0]*fr)
+        plt.text(periods.value[0]*fr, 5.5, '{:.2f}'.format(fr))
     
     plt.gca().set_xscale('log')
     plt.xlabel('Period [Myr]')
     plt.ylabel('Number')
+    
     plt.tight_layout()
     plt.savefig('../plots/period_{:s}.png'.format(root))
     
@@ -1326,6 +2202,8 @@ def aux_ratios():
     a = np.array([947, 625, 467, 269, 185])
     print(a/a[0])
 
+
+# Evolution following the impacts
 
 def visualize_lz_change():
     """"""
@@ -1411,7 +2289,6 @@ def visualize_lz_change():
     
     plt.tight_layout()
     plt.savefig('../plots/xy_dlz_{:s}.png'.format(root))
-
 
 def paraview_lz_change():
     """"""
@@ -1522,6 +2399,252 @@ def boot_bar_ehist():
     plt.tight_layout()
 
 
+def elz_time():
+    """Plot E, Lz vs time"""
+    
+    # simulation setup
+    d = 28*u.kpc
+    m = 2.8e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 10
+    Nrand = 100000
+    mw_label = 'ndisk'
+    
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    # select a narrow bin of final energies
+    e_fin = orbit.energy()[-1]
+    elevels = np.array([-0.15, -0.14, -0.136, -0.131, -0.13, -0.126, -0.125, -0.12, -0.119, -0.115])*u.kpc**2*u.Myr**-2
+    elevels = np.array([-0.1282, -0.1225])*u.kpc**2*u.Myr**-2
+    elevels = np.array([-0.126, -0.124])*u.kpc**2*u.Myr**-2
+    #elevels = np.array([-0.0883, -0.0796])*u.kpc**2*u.Myr**-2
+    ind_e = (e_fin>elevels[0]) & (e_fin<elevels[1])
+    
+    etot = orbit.energy()
+    lz = orbit.angular_momentum()[2]
+    
+    print(np.shape(etot[:,ind_e]))
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(10,10), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.plot(orbit.t, etot[:,ind_e], 'k-', lw=0.5, alpha=0.1)
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    
+    plt.sca(ax[1])
+    plt.plot(orbit.t, lz[:,ind_e], 'k-', lw=0.5, alpha=0.1)
+    plt.ylabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.xlabel('Time [Myr]')
+
+    plt.tight_layout()
+    plt.savefig('../plots/e_lz_time_{:s}.png'.format(root))
+
+def elz_time_hist():
+    """Show the initial and final distributions of E,Lz"""
+    
+    # simulation setup
+    d = 27*u.kpc
+    m = 2.8e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 10
+    Nrand = 100000
+    mw_label = 'ndisk'
+    
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    # calculate orbital properties
+    etot = orbit.energy()
+    lz = orbit.angular_momentum()[2]
+    
+    # select a narrow bin of final energies
+    elevels = np.array([-0.1391, -0.133, -0.1286, -0.1231, -0.1123, -0.1026,])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    ind_energy = [(etot[-1]>elevels[2*x]) & (etot[-1]<elevels[2*x+1]) for x in range(Nlevel)]
+    
+    # bins
+    e_bins = np.linspace(-0.15,-0.09,50)
+    lz_bins = np.linspace(-4,0,50)
+    
+    # plotting
+    plt.close()
+    fig, ax = plt.subplots(2,3,figsize=(12,8))
+    
+    for i in range(Nlevel):
+        plt.sca(ax[0,i])
+        plt.hist(etot.value[0,ind_energy[i]], bins=e_bins, histtype='step', label='Initial')
+        plt.hist(etot.value[-1,ind_energy[i]], bins=e_bins, histtype='step', label='Final')
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Number')
+    
+        plt.sca(ax[1,i])
+        plt.hist(lz.value[0,ind_energy[i]], bins=lz_bins, histtype='step', label='Initial')
+        plt.hist(lz.value[-1,ind_energy[i]], bins=lz_bins, histtype='step', label='Final')
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('Number')
+    
+    plt.sca(ax[0,0])
+    plt.legend(fontsize='x-small', loc=1)
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_hist_evo_{:s}.png'.format(root))
+
+def elz_tip():
+    """Explore the original locations of stars at the tip of the ripple"""
+    
+    # simulation setup
+    d = 27*u.kpc
+    m = 2.8e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 10
+    Nrand = 100000
+    mw_label = 'ndisk'
+    
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    # calculate orbital properties
+    etot = orbit.energy()
+    lz = orbit.angular_momentum()[2]
+    
+    # select a narrow bin of final energies
+    elevels = np.array([-0.1391, -0.133, -0.1286, -0.1231, -0.1123, -0.1026,])*u.kpc**2*u.Myr**-2
+    Nlevel = int(np.size(elevels)/2)
+    ind_energy = [(etot[-1]>elevels[2*x]) & (etot[-1]<elevels[2*x+1]) for x in range(Nlevel)]
+    
+    print(np.shape(lz))
+    print(np.shape(lz.value[0, ind_energy[0]]))
+    #print(lz)
+    
+    ind_lz = lz[-1]>-1.1#*u.kpc**2*u.Myr**-1
+    lz_bins = np.linspace(-4,0,50)
+
+    plt.close()
+    plt.figure()
+    
+    i = 1
+    #plt.plot(lz.value[-1,:], etot.value[-1,:], 'ko', ms=1)
+    #plt.plot(lz.value[-1, ind_energy[i]], etot.value[-1, ind_energy[i]], 'ro', ms=1)
+    
+    #plt.hist(lz.value[-1, ind_energy[i] & ind_lz], histtype='step', density=True)
+    plt.hist(lz.value[0, ind_energy[i]], bins=lz_bins, histtype='step', density=True)
+    plt.hist(lz.value[0, ind_energy[i] & ind_lz], bins=lz_bins, histtype='step', density=True)
+    
+    plt.tight_layout()
+
+# Spatial dependence
+
+def elz_sides():
+    """Plot resulting ELz in different halves of the galaxy"""
+    
+    # simulation setup
+    d = 27*u.kpc
+    m = 2.8e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 10
+    Nrand = 100000
+    mw_label = 'ndisk'
+    
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    #iskip = 0
+    #Nskip = 8
+    #Nrand = 40000
+    #mw_label = 'idisk'
+    #m = 2e10*u.Msun
+    #omega = 41*u.km/u.s/u.kpc
+    #root = 'm.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip)
+    #fname = '../data/bar_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    # initial
+    e_init = orbit.energy()[0]
+    lz_init = orbit.angular_momentum()[2][0]
+    print(np.size(e_init), np.size(np.unique(e_init)))
+    
+    e_fin = orbit.energy()[-1]
+    lz_fin = orbit.angular_momentum()[2][-1]
+    
+    t = Table.read('../data/rcat_giants.fits')
+    if 'halo' in mw_label:
+        ind_h3 = (t['eccen_pot1']>0.7) & (t['SNR']>5)
+    else:
+        ind_h3 = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>10)
+    t = t[ind_h3]
+    
+    N = np.size(e_init)
+    if N<10000:
+        ms = 4
+        alpha = 1
+    else:
+        ms = 1
+        alpha = 0.1
+    
+    ind_xp = orbit.pos.x[-1]>0
+    ind_yp = orbit.pos.y[-1]>0
+    ind_zp = orbit.pos.z[-1]>0
+    
+    selections = [ind_xp, ind_yp, ind_zp]
+    labels_positive = ['x>0', 'y>0', 'z>0']
+    labels_negative = ['x<0', 'y<0', 'z<0']
+    
+    plt.close()
+    fig, ax = plt.subplots(2,3,figsize=(12,8), sharex=True, sharey=True)
+    
+    for i in range(3):
+        plt.sca(ax[0,i])
+        plt.plot(lz_fin[selections[i]], e_fin[selections[i]], 'ko', ms=ms, mew=0, alpha=alpha)
+        plt.text(0.9,0.9,labels_positive[i], transform=plt.gca().transAxes, ha='right', va='top', fontsize='small')
+        
+        plt.sca(ax[1,i])
+        plt.plot(lz_fin[~selections[i]], e_fin[~selections[i]], 'ko', ms=ms, mew=0, alpha=alpha)
+        plt.text(0.9,0.9,labels_negative[i], transform=plt.gca().transAxes, ha='right', va='top', fontsize='small')
+        
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    plt.xlim(-8,2)
+    plt.ylim(-0.18, -0.03)
+    
+    for i in range(2):
+        plt.sca(ax[i,0])
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+    for ax_ in ax.ravel():
+        plt.sca(ax_)
+        for k, e in enumerate(eridge):
+            plt.axhline(e, lw=0.5, alpha=0.5)
+        
+    ##plt.xlim(-2,2)
+    ##plt.ylim(-0.18,-0.08)
+    #plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/elz_xyz_{:s}.png'.format(root))
+
+
+
+# Resulting distributions
+
 def ehist_distance_halo():
     """"""
     
@@ -1622,6 +2745,49 @@ def ehist_disk_halo():
     
     plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     plt.tight_layout(h_pad=0)
+
+def diagnose_rvr(d=27*u.kpc):
+    """"""
+    
+    # simulation setup
+    #d = 26.5*u.kpc
+    m = 1.4e10*u.Msun
+    a = 1*u.kpc
+    Nskip = 10
+    Nrand = 100000
+    mw_label = 'nhalo'
+    
+    root = 'd.{:.1f}_m.{:.1f}_a.{:02.0f}_{:s}_N.{:06d}_{:d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, a.to(u.kpc).value, mw_label, Nrand, Nskip)
+    fname = '../data/sgr_hernquist_{:s}.h5'.format(root)
+    
+    f = h5py.File(fname, 'r')
+    orbit = gd.Orbit(f['pos'], f['vel'], t=f['time'], hamiltonian=ham, frame=gc_frame)
+    f.close()
+    
+    c = coord.Galactocentric(x=orbit.pos.x[-1]*u.kpc, y=orbit.pos.y[-1]*u.kpc, z=orbit.pos.z[-1]*u.kpc, v_x=orbit.vel.d_x[-1]*u.kpc/u.Myr, v_y=orbit.vel.d_y[-1]*u.kpc/u.Myr, v_z=orbit.vel.d_z[-1]*u.kpc/u.Myr)
+    
+    r = orbit.spherical.distance*u.kpc
+    vr = (orbit.spherical.vel.d_distance*u.kpc/u.Myr).to(u.km/u.s)
+    
+    print(np.shape(r), np.shape(vr))
+    
+    plt.close()
+    fig, ax = plt.subplots(1,2, figsize=(12,6), sharex=True, sharey=True)
+    
+    for e, i in enumerate([0,-1]):
+        plt.sca(ax[e])
+        plt.plot(r[i], vr[i], 'ko', ms=1, mew=0, alpha=0.5)
+        
+        plt.xlabel('r [kpc]')
+    
+    plt.sca(ax[0])
+    plt.xlim(1,100)
+    plt.ylim(-400,400)
+    plt.ylabel('$V_r$ [km s$^{-1}$]')
+    
+    plt.tight_layout()
+    plt.savefig('../plots/rvr_{:s}.png'.format(root))
+
 
 
 def suite_kde():
@@ -2330,6 +3496,10 @@ def evolve_bar_stars(m=1e10*u.Msun, omega=41*u.km/u.s/u.kpc, T=3*u.Gyr, mw_label
         c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
     elif mw_label=='idisk':
         c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)[iskip::Nskip]
+    elif mw_label=='ndisk':
+        c = initialize_ndisk(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='nhalo':
+        c = initialize_nhalo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
     else:
         mw_label = 'td'
         c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
@@ -2343,7 +3513,10 @@ def evolve_bar_stars(m=1e10*u.Msun, omega=41*u.km/u.s/u.kpc, T=3*u.Gyr, mw_label
     # integrate orbits
     dt = 0.5*u.Myr
     Nstep = int((T/dt).decompose())
+    t1 = time.time()
     orbit = ham_bar.integrate_orbit(w0_mw, dt=dt, n_steps=Nstep, Integrator=gi.DOPRI853Integrator)
+    t2 = time.time()
+    print(t2-t1)
     
     # save orbits
     fname = '../data/bar_m.{:.1f}_om.{:2.0f}_{:s}_N.{:06d}_{:d}.{:d}.h5'.format(m.to(u.Msun).value*1e-10, omega.to(u.km/u.s/u.kpc).value, mw_label, Nrand, Nskip, iskip)

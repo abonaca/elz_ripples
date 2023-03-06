@@ -262,3 +262,192 @@ def observe_model(sgr=False):
     #plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
     plt.tight_layout()
+
+
+def initialize_ndisk(Nrand=50000, seed=2572, ret=True, graph=False):
+    """Draw particles from N21 disk"""
+    
+    td = pickle.load(open('../data/thick_disk.pkl', 'rb'))
+    eta = 1.4
+    eta_x = 2.5
+    eta_v = 1.6
+    
+    #call = coord.Galactocentric(x=-1*td['x'][:,0]*u.kpc, y=td['x'][:,1]*u.kpc, z=td['x'][:,2]*u.kpc, v_x=-1*eta*td['v'][:,0]*u.km/u.s, v_y=eta*td['v'][:,1]*u.km/u.s, v_z=eta*td['v'][:,2]*u.km/u.s)
+    call = coord.Galactocentric(x=-1*eta_x*td['x'][:,0]*u.kpc, y=eta_x*td['x'][:,1]*u.kpc, z=eta_x*td['x'][:,2]*u.kpc, v_x=-1*eta_v*td['v'][:,0]*u.km/u.s, v_y=eta_v*td['v'][:,1]*u.km/u.s, v_z=eta_v*td['v'][:,2]*u.km/u.s)
+    
+    # select stars with high energy
+    w0 = gd.PhaseSpacePosition(call.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0]
+    ind_highe = etot>-0.18*u.kpc**2*u.Myr**-2
+    call = call[ind_highe]
+    
+    ## H3 selection function
+    #cgal = call.transform_to(coord.Galactic())
+    #ind_h3 = (np.abs(cgal.b)>20*u.deg) & (cgal.distance>2*u.kpc)
+    ##ind_h3 = (cgal.distance>2*u.kpc)
+    #call = call[ind_h3]
+    
+    # pick randomly Nrand stars
+    np.random.seed(seed)
+    Ntot = np.size(call.x)
+    ind = np.arange(0, Ntot, 1, dtype=int)
+    if Nrand<Ntot:
+        ind_rand = np.random.choice(ind, size=Nrand, replace=False)
+    else:
+        ind_rand = ind
+    c = call[ind_rand]
+    
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0].value
+    lz = orbit.angular_momentum()[2][0]
+    
+    if graph:
+        print(np.sum((etot>-0.16) & (etot<-0.06)))
+        print(np.sum(etot<0))
+        
+        t = Table.read('../data/rcat_giants.fits')
+        ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
+        ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>5) # & (t['FeH']<-1)
+        #t = t[ind_disk]
+        
+        ebins = np.linspace(-0.30,-0.02,200)
+        #ebins = np.linspace(-0.16,-0.06,50)
+        
+        plt.close()
+        fig, ax = plt.subplots(1,2,figsize=(10,5))
+        
+        plt.sca(ax[0])
+        plt.plot(lz, etot, 'k.', ms=3, alpha=0.1, mew=0, zorder=0)
+        plt.plot(t['Lz'], t['E_tot_pot1'], 'o', color='tab:orange', zorder=0, ms=1, alpha=0.1)
+        
+        plt.xlim(-6,6)
+        plt.ylim(-0.3, -0.02)
+        plt.ylim(-0.18, -0.02)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+        plt.sca(ax[1])
+        #plt.hist(lz.value, bins=100, density=True, label='Model')
+        plt.hist(etot, bins=ebins, density=True, label='Model')
+        plt.hist(t['E_tot_pot1'][ind_disk], bins=ebins, density=True, histtype='step', label='H3', lw=2)
+        
+        plt.legend(fontsize='small')
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+    
+        plt.tight_layout()
+        plt.savefig('../plots/initialize_ndisk_phase.png')
+    
+    if ret:
+        ind = etot<0
+        return c[ind]
+
+def initialize_nhalo(Nrand=50000, seed=2572, ret=True, graph=False):
+    """"""
+    
+    th = Table.read('/home/ana/data/gse/gse_stars.fits')
+    eta = 1.
+    eta_x = 1.
+    eta_v = 1.
+    
+    call = coord.Galactocentric(x=eta_x*th['X']*u.kpc, y=eta_x*th['Y']*u.kpc, z=eta_x*th['Z']*u.kpc, v_x=eta_v*th['Vx']*u.km/u.s, v_y=eta_v*th['Vy']*u.km/u.s, v_z=eta_v*th['Vz']*u.km/u.s)
+    
+    # select stars with high energy
+    w0 = gd.PhaseSpacePosition(call.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0]
+    ind_highe = etot>-0.18*u.kpc**2*u.Myr**-2
+    call = call[ind_highe]
+    
+    ## H3 selection function
+    #cgal = call.transform_to(coord.Galactic())
+    #ind_h3 = (np.abs(cgal.b)>20*u.deg) & (cgal.distance>2*u.kpc)
+    ##ind_h3 = (cgal.distance>2*u.kpc)
+    #call = call[ind_h3]
+    
+    # pick randomly Nrand stars
+    np.random.seed(seed)
+    Ntot = np.size(call.x)
+    ind = np.arange(0, Ntot, 1, dtype=int)
+    if Nrand<Ntot:
+        ind_rand = np.random.choice(ind, size=Nrand, replace=False)
+    else:
+        ind_rand = ind
+    c = call[ind_rand]
+    
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0].value
+    lz = orbit.angular_momentum()[2][0]
+    
+    if graph:
+        print(np.sum((etot>-0.16) & (etot<-0.06)))
+        print(np.sum(etot<0))
+        
+        t = Table.read('../data/rcat_giants.fits')
+        ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>5)
+        ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) #& (t['SNR']>5) # & (t['FeH']<-1)
+        #t = t[ind_gse]
+        
+        #ebins = np.linspace(-0.30,-0.02,200)
+        ebins = np.linspace(-0.16,-0.06,100)
+        
+        plt.close()
+        fig, ax = plt.subplots(1,2,figsize=(10,5))
+        
+        plt.sca(ax[0])
+        plt.plot(lz, etot, 'k.', ms=3, alpha=0.1, mew=0, zorder=0)
+        plt.plot(t['Lz'], t['E_tot_pot1'], 'o', color='tab:orange', zorder=0, ms=1, alpha=0.1)
+        
+        plt.xlim(-6,6)
+        plt.ylim(-0.3, -0.02)
+        plt.ylim(-0.18, -0.02)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+        plt.sca(ax[1])
+        #plt.hist(lz.value, bins=100, density=True, label='Model')
+        plt.hist(etot, bins=ebins, density=True, label='Model')
+        plt.hist(t['E_tot_pot1'][ind_gse], bins=ebins, density=True, histtype='step', label='H3', lw=1)
+        
+        plt.legend(fontsize='small')
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+    
+        plt.tight_layout()
+        plt.savefig('../plots/initialize_nhalo_phase.png')
+    
+    if ret:
+        ind = etot<0
+        return c[ind]
+
+def mwpotential():
+    pot = agama.GalaPotential(
+        dict(type='miyamotonagai', mass=6.8e10, scaleradius=3.0, scaleheight=0.28),  # disk
+        dict(type='dehnen', mass=5.00e9, scaleradius=1.0),   # bulge
+        dict(type='dehnen', mass=1.71e9, scaleradius=0.07),  # nucleus
+        dict(type='nfw',    mass=5.4e11, scaleradius=15.62)) # halo
+    
+    c = initialize_ndisk(Nrand=50000)
+    ic = np.array([c.x.value, c.y.value, c.z.value, c.v_x.value, c.v_y.value, c.v_z.value]).T
+    
+    timeinit = -5  # 3 Gyr back in time - the earliest point in the Sgr simulation
+    timecurr =  0.0  # current time is 0, the final point
+    times, orbits = agama.orbit(ic=ic, potential=pot, timestart=timecurr, time=timeinit-timecurr, trajsize=100).T
+    
+    # organize output in a single 3D numpy array
+    orbit = np.empty((len(orbits),100,6))
+    for i in range(len(orbits)):
+        orbit[i] = orbits[i]
+    
+    plt.close()
+    plt.plot(orbit[:,0,0], orbit[:,0,2], 'k.')
+    plt.plot(orbit[:,-1,0], orbit[:,-1,2], 'ro')
+    
+    plt.gca().set_aspect('equal')
+    plt.tight_layout()
+
+
+
