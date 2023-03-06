@@ -29,42 +29,61 @@
 
 \newcommand{\package}[1]{\textsl{#1}}
 
-% \title{Signatures of Sagittarius rippling the entire Milky Way galaxy}
-\title{Signatures of long-lived ripples throughout the Milky Way galaxy}
+\title{Sagittarius merger rippling the entire Milky Way galaxy}
+% \title{Signatures of long-lived ripples throughout the Milky Way galaxy}
 
 \author{Ana Bonaca$^1$, Rohan P. Naidu$^{2,3}$, Charlie Conroy$^4$}
-
 
 \begin{document}
 
 \maketitle
-
 \let\thefootnote\relax\footnote{
 
 \begin{affiliations}
 \item The Observatories of the Carnegie Institution for Science, Pasadena, CA, USA
-
 \item Massachusetts Institute of Technology, Cambridge, MA, USA
 \item Hubble Fellow
-
 \item Center for Astrophysics $|$ Harvard \& Smithsonian,  Cambridge, MA, USA
-
 % \item Steward Observatory, University of Arizona, 933 North Cherry Avenue, Tucson, AZ 85721, USA
-  
 \end{affiliations}
 }
 
 \vspace{-3.5mm}
 \begin{abstract}
-Using a sample of $\sim16,000$ stars beyond the Milky Way's disk plane ($|Z_{gal}|\gtrsim2$\,kpc), we find evidence of discrete orbital resonances among the old stellar populations of the Milky Way. 
-The resonances are present at similar orbital energy levels both in the high-latitude disk and in the radial halo components.
-- recent: mw in disequilibrium
-- here we show chaos super informative
-(- check in sims / data if features more informative beyond the plane)
-- measure where the peaks are
-- kick off industry to constrain the locations of the peaks (test using chervin's models? share a notebook w the H3 selection function, potential we used)
+Mergers are driving the formation of galaxies like the Milky Way: their build up the stellar and dark-matter mass (cit), as well as affect existing structures (cit).
+These perturbations are longest-lived off of the plane (cit), but our precise measurements of the dynamical orbital space have so far been confined to the Solar neighborhood, and therefore only uncovered the most recent perturbations (cit), rather than their entire history.
+Here we report a spectrum of orbital resonances in a sample of nearly 20,000 giant stars beyond the Galactic disk plane as nearly equidistant peaks in orbital energies on both disk- and halo-like orbits.
+Using numerical experiments we show that the accretion of the Sagittarius dwarf galaxy can form such ripples, with the ripple strength being set by the mass of the merger, while their positions depend on its orbital history.
+Matching the narrow energy spacing between the ripples requires modeling the effects of dynamical friction and mass-loss.
+Assuming Chandrasekhar dynamical friction(cit) and a linear mass loss, we find that Sagittarius lost $99\%$ of its total mass, consistent with CDM predictions (cit).
+The mass-loss rates of dark-matter halos depend sensitively on their density profile, so the detected ripples provide a unique constrain on the particle nature of dark matter.
+% - and a sensitive test of the particle nature of dark matter (predict different density profiles, and therefore mass-loss histories)
+% %
+% Galaxies and their dark-matter halos grow through accretion of smaller galaxies (theory cit), which has been abundantly documented in the Milky Way.
+% - MW mergers driving galaxy formation: building up stellar mass + dm mass %+ perturbing the existing structures
+% - former abundantly observed in the MW, and latter as recent perturbations in the phase-space of nearby stars % combine in first sentence
+% While the- hard beyond the last Gyr due to signatures being erased in the disk / Solar neighborhood, but longer-lived beyond (cite)
+% Most recent perturbations visible in the Solar neighborhood (cit), but longer-lived away from the plane and scattering off of spiral arms and giant molecular clouds (cit).
+% - Sgr merger -- standard for calibrating tidal disruption of a dark-matter subhalo, 
+% - however, slight mis-match, especially at higher energies -- potentially non-linear mass-loss history
+%%
+% - evidence in the MW disk of recent perturbation, but older history erased
+% and identify them as Sgr ripples
+% Using a sample of $\sim20,000$ old, giant stars beyond the Milky Way's disk plane ($|Z_{gal}|\gtrsim2$\,kpc), we find evidence of discrete orbital resonances at constant orbital energies.
+% The resonances ubiquitous, are present throughout the Galaxy, both in the high-latitude disk and in the radial halo -- first time 
+% % - at same locations, also in different parts of the Galaxy.
+% - recent mw in disequilibrium: possible sources of perturbation: internal -- bar, external -- satellite merger
+% - through a series of numerical experiments, we demonstrate that a perturbation by a massive satellite, like the Sagittarius dwarf galaxy, is needed to excite the observed resonances
+% - the amplitudes of the peaks is related to the mass of the perturber, while their energy levels are determined by the past orbit of the satellite
+% - we find that a massive Sgr, w mass-loss, produces the observed resonances
+% - dynamical friction + mass-loss crucial elements to match the resonant energies, tidal stripping, first time we can directly measure it -- potential for DM microphysics 
+% - satellite tidal stripping relevant for cosmology more broadly? (check w Andrew)
+% % - orbital history largely depends on , mapping of these resonances will allow reconstruction of Sgr past orbit
+% - mergers are agents of chaos, but there is also regularity + information
+% % (- check in sims / data if features more informative beyond the plane)
+% % - measure where the peaks are
+% % - kick off industry to constrain the locations of the peaks (test using chervin's models? share a notebook w the H3 selection function, potential we used)
 \end{abstract}
-
 \vspace{1cm}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -117,6 +136,10 @@ The number of stars in each panel is indicated in the top right.
 - comparison to other perturbations
 
 - what we'll learn from this
+-- subhalo survival related to expected dm annihilation rates)
+-- vdbosch: Accurately predicting the demographics of dark matter (DM) substructure is of paramount importance for many fields of astrophysics, including gravitational lensing, galaxy evolution, halo occupation modelling, and constraining the nature of DM.
+-- so far, dm tidal disruption only theoretical, plagued by resolution issues
+-- here empirical!
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -192,7 +215,13 @@ The number of stars in each panel is indicated in the top right.
 \end{center}
 
 \noindent
-{\bf Identification of giants}
+{\bf Identification of giants / selection effects}
+
+{\bf In-situ, bursty star formation?}
+
+{\bf Bar?}
+
+{\bf Dependence on the overall potential}
 
 
 \end{document}
