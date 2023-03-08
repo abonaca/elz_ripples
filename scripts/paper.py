@@ -27,7 +27,10 @@ import h5py
 from multiprocessing import Pool, Process
 from fractions import Fraction
 
-ham = gp.Hamiltonian(gp.MilkyWayPotential())
+#ham = gp.Hamiltonian(gp.MilkyWayPotential())
+mwpot = gp.load('/home/ana/data/MilkyWayPotential2022.yml')
+ham = gp.Hamiltonian(mwpot)
+
 
 coord.galactocentric_frame_defaults.set('v4.0')
 gc_frame = coord.Galactocentric()
@@ -293,7 +296,7 @@ def kde_fit():
 # plots #
 #########
 
-def elz_ehist(snr=5):
+def elz_ehist(snr=3):
     """"""
     
     # load rcat
@@ -305,63 +308,77 @@ def elz_ehist(snr=5):
     lz_err = (t['Lz_err']*u.km*u.kpc*u.s**-1).to(u.kpc**2*u.Myr**-1)
     etot_err = (t['E_tot_pot1_err']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
     
+    # get energy in updated potential
+    c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
     
-    # load ELz samples
-    pkl = pickle.load(open('../data/elz_samples.{:d}.pkl'.format(snr), 'rb'))
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    etot = orbit.energy()[0].reshape(N,-1)
+    
+    ## load ELz samples
+    #pkl = pickle.load(open('../data/elz_samples.{:d}.pkl'.format(snr), 'rb'))
     
     # load disk ridgeline
-    par = np.load('../data/elz_ridgeline_giants.{:d}.npy'.format(snr))
+    par = np.load('../data/elz_ridgeline_giants.5.npy')
     poly = np.poly1d(par)
     
-    eridge = np.linspace(-0.16, -0.05, 100)
-    lzridge = poly(eridge)
-    dlz = t['Lz'] - poly(t['E_tot_pot1'])
+    #eridge = np.linspace(-0.16, -0.05, 100)
+    #lzridge = poly(eridge)
+    #dlz = t['Lz'] - poly(t['E_tot_pot1'])
     
     # define groups of stars in the ELz plane
-    ind_1 = (dlz<0.3) & (t['Lz']<-0.5)
-    ind_2 = (dlz>0.3) & (dlz<1) & (t['Lz']<-0.5)
-    #ind_3 = (dlz>1) & (t['Lz']<-0.2)
-    ind_3 = (t['Lz']<-0.2) & (t['Lz']>-0.5)
-    #ind_4 = (t['Lz']<0) & (t['Lz']>-0.5)
-    ind_4 = (t['Lz']<0.2) & (t['Lz']>-0.2)
-    #ind_4 = (t['Lz']<0.5) & (t['Lz']>0.2)
+    ind_halo = (t['Lz']<0) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.95)
+    ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.35) & (t['circLz_pot1']<0.7)
     
-    ind = [ind_1, ind_2, ind_3, ind_4]
-    color = [mpl.cm.plasma(x) for x in [0.8, 0.6, 0.4, 0.2]]
+    ind = [ind_disk, ind_halo]
+    color = ['darkorange', 'navy']
+    labels = ['Disk (0.35<circ<0.7)', 'Halo (0.7<ecc<0.95)']
+    
+    #ind_1 = (dlz<0.3) & (t['Lz']<-0.5)
+    #ind_2 = (dlz>0.3) & (dlz<1) & (t['Lz']<-0.5)
+    ##ind_3 = (dlz>1) & (t['Lz']<-0.2)
+    #ind_3 = (t['Lz']<-0.2) & (t['Lz']>-0.5)
+    ##ind_4 = (t['Lz']<0) & (t['Lz']>-0.5)
+    #ind_4 = (t['Lz']<0.2) & (t['Lz']>-0.2)
+    ##ind_4 = (t['Lz']<0.5) & (t['Lz']>0.2)
+    
+    #ind = [ind_1, ind_2, ind_3, ind_4]
+    #color = [mpl.cm.plasma(x) for x in [0.8, 0.6, 0.4, 0.2]]
     
     
     # Plotting
     
     plt.close()
-    fig = plt.figure(figsize=(16,8))
+    fig = plt.figure(figsize=(14,5.5))
     
     gs1 = mpl.gridspec.GridSpec(1,1)
-    gs1.update(left=0.08, right=0.48, top=0.95, bottom=0.1, hspace=0.05)
+    gs1.update(left=0.08, right=0.4, top=0.97, bottom=0.12, hspace=0.05)
 
-    gs2 = mpl.gridspec.GridSpec(4,1)
-    gs2.update(left=0.55, right=0.975, top=0.95, bottom=0.1, hspace=0.05)
+    gs2 = mpl.gridspec.GridSpec(2,1)
+    gs2.update(left=0.47, right=0.975, top=0.97, bottom=0.12, hspace=0.05)
 
     ax0 = fig.add_subplot(gs1[0])
     ax1 = fig.add_subplot(gs2[0])
     ax2 = fig.add_subplot(gs2[1])
-    ax3 = fig.add_subplot(gs2[2])
-    ax4 = fig.add_subplot(gs2[3])
+    #ax3 = fig.add_subplot(gs2[2])
+    #ax4 = fig.add_subplot(gs2[3])
     
-    ax = [ax0, ax1, ax2, ax3, ax4]
+    #ax = [ax0, ax1, ax2, ax3, ax4]
+    ax = [ax0, ax1, ax2]
     
     #######
     # E-Lz
     
     plt.sca(ax[0])
-    plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
+    plt.plot(t['Lz'], etot, 'ko', ms=1.5, mew=0, alpha=0.3)
     #plt.plot(pkl['lz'], pkl['etot'], 'ko', ms=1, mew=0, alpha=0.005, rasterized=True)
     
-    alpha = 0.2
-    plt.plot(lzridge+0.3, eridge, 'r:', alpha=alpha)
-    plt.plot(lzridge+1, eridge, 'r:', alpha=alpha)
-    plt.axvline(0, color='r', ls=':', alpha=alpha)
-    plt.axvline(-0.2, color='r', ls=':', alpha=alpha)
-    plt.axvline(-0.5, color='r', ls=':', alpha=alpha)
+    #alpha = 0.2
+    #plt.plot(lzridge+0.3, eridge, 'r:', alpha=alpha)
+    #plt.plot(lzridge+1, eridge, 'r:', alpha=alpha)
+    #plt.axvline(0, color='r', ls=':', alpha=alpha)
+    #plt.axvline(-0.2, color='r', ls=':', alpha=alpha)
+    #plt.axvline(-0.5, color='r', ls=':', alpha=alpha)
     
     plt.xlim(-6,6)
     plt.ylim(-0.18, -0.02)
@@ -387,40 +404,62 @@ def elz_ehist(snr=5):
     ###############
     # E histograms
     
-    ebins = np.linspace(-0.18,-0.08,80)
-    ebins = np.linspace(-0.18,-0.08,150)
+    ebins = np.linspace(-0.18,-0.08,100)
+    #ebins = np.linspace(-0.18,-0.08,150)
+    #ebins = np.linspace(-0.16,-0.08,100)
     
-    for i in range(4):
+    for i in range(2):
         plt.sca(ax[i+1])
     
         #plt.hist(t['E_tot_pot1'][ind[i]], bins=ebins, density=True, histtype='step')
-        plt.hist(pkl['etot'][ind[i]].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.8, lw=1.5)
+        #plt.hist(pkl['etot'][ind[i]].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.8, lw=1.5)
+        n, b, bars = plt.hist(etot[ind[i]].ravel().value, bins=ebins, density=True, histtype='stepfilled', color=color[i], alpha=0.2, lw=1.5, label=labels[i])
 
         ind_snr = t['SNR']>10
         #ind_snr = etot_err<0.0025*u.kpc**2*u.Myr**-2
         #plt.hist(t['E_tot_pot1'][ind[i] & ind_snr], bins=ebins, density=True, histtype='step')
         #plt.hist(pkl['etot'][ind[i] & ind_snr].ravel().value, bins=ebins, density=True, histtype='step')
         
-        plt.text(0.98,0.9, '{:d}'.format(np.sum(ind[i])), transform=plt.gca().transAxes, fontsize='small', va='top', ha='right')
+        #plt.text(0.98,0.9, '{:d}'.format(np.sum(ind[i])), transform=plt.gca().transAxes, fontsize='small', va='top', ha='right')
         
-        plt.xlim(-0.18, -0.08)
+        plt.xlim(-0.16, -0.08)
         plt.ylabel('Density')
-        
-        if i<3:
+        plt.legend(fontsize='small', frameon=False, handlelength=0.5, loc=1)
+
+        if i<1:
             plt.gca().set_xticklabels([])
     
     plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
+    #grad = np.atleast_2d(np.linspace(0,1,256)).T
+    ##ax = plt.gca()
+    #lim = plt.gca().get_xlim() + plt.gca().get_ylim()
+    #for bar in bars:
+        #print(bar)
+        #bar.set_zorder(1)
+        #bar.set_facecolor("none")
+        #x,y = bar.get_xy()[0]
+        ##w,h = bar.get_width(), bar.get_height()
+        #h = y
+        #print(h)
+        #w = np.abs(b[1]-b[0])
+        #plt.imshow(grad, extent=[x,x+w,0,h], aspect="auto", zorder=0, cmap='Blues')
+    #plt.gca().axis(lim)
+
+    
     # show gaps
     egap = [-0.16397, -0.15766, -0.15249, -0.14117, -0.12969, -0.12403, -0.11891, -0.10511, -0.09767]
-    for e in egap:
-        for i in range(4):
+    eridge = np.array([-0.145, -0.134, -0.127, -0.122, -0.116, -0.107, -0.098])
+    eridge = np.array([-0.145, -0.134, -0.127, -0.122, -0.116])
+    for e in eridge:
+        plt.sca(ax[0])
+        plt.arrow(poly(e)-0.9, e, 0.5, 0., color=color[0], alpha=0.5, head_length=0.2)
+        plt.arrow(1.5, e, -0.5, 0., color=color[1], alpha=0.5, head_length=0.2, zorder=1)
+        for i in range(2):
             plt.sca(ax[i+1])
             plt.axvline(e, color='k', ls=':', lw=0.5)
     
-    plt.savefig('../paper/fig1.{:d}.png'.format(snr))
-
-
+    plt.savefig('../paper/fig1.pdf')
 
 
 ##########

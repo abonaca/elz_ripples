@@ -679,6 +679,7 @@ def ehist(snr=3, d=26):
     ind = (t['SNR']>snr)
     t = t[ind]
     N = len(t)
+    print(N, np.percentile(t['Vrad_err'], [50,90]), np.percentile(t['dist_adpt_err']/t['dist_adpt'], [50,90]), np.percentile(t['dist_adpt'], [0.1,99.9]))
     
     # get energy in updated potential
     c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')

@@ -17,6 +17,8 @@
     urlcolor={blue!80!black}
 }
 
+\renewcommand{\floatpagefraction}{.9}
+
 \newcommand{\gyr}{\ensuremath{\textrm{Gyr}}}
 \newcommand{\kpc}{\ensuremath{\textrm{kpc}}}
 \newcommand{\mas}{\ensuremath{\textrm{mas}}}
@@ -29,7 +31,7 @@
 
 \newcommand{\package}[1]{\textsl{#1}}
 
-\title{Sagittarius merger rippling the entire Milky Way galaxy}
+\title{\huge Sagittarius merger rippling the entire Milky Way galaxy}
 % \title{Signatures of long-lived ripples throughout the Milky Way galaxy}
 
 \author{Ana Bonaca$^1$, Rohan P. Naidu$^{2,3}$, Charlie Conroy$^4$}
@@ -50,13 +52,14 @@
 
 \vspace{-3.5mm}
 \begin{abstract}
-Mergers are driving the formation of galaxies like the Milky Way: their build up the stellar and dark-matter mass (cit), as well as affect existing structures (cit).
-These perturbations are longest-lived off of the plane (cit), but our precise measurements of the dynamical orbital space have so far been confined to the Solar neighborhood, and therefore only uncovered the most recent perturbations (cit), rather than their entire history.
+Mergers are driving the formation of galaxies like the Milky Way: they build up the stellar and dark-matter mass (cit), as well as affect existing structures (cit).
+These perturbations are longest-lived off of the plane (cit), but our precise measurements of the dynamical orbital space have so far been confined to the Solar neighborhood, and therefore only uncovered the most recent perturbations (cit), rather than their entire cosmic history.
 Here we report a spectrum of orbital resonances in a sample of nearly 20,000 giant stars beyond the Galactic disk plane as nearly equidistant peaks in orbital energies on both disk- and halo-like orbits.
 Using numerical experiments we show that the accretion of the Sagittarius dwarf galaxy can form such ripples, with the ripple strength being set by the mass of the merger, while their positions depend on its orbital history.
+The orbital decay, sensitive to the nature of dark matter, of any merger has not been reconstructed despite this being the key way that galaxies grow
 Matching the narrow energy spacing between the ripples requires modeling the effects of dynamical friction and mass-loss.
 Assuming Chandrasekhar dynamical friction(cit) and a linear mass loss, we find that Sagittarius lost $99\%$ of its total mass, consistent with CDM predictions (cit).
-The mass-loss rates of dark-matter halos depend sensitively on their density profile, so the detected ripples provide a unique constrain on the particle nature of dark matter.
+The mass-loss rates of dark-matter halos depend sensitively on their density profile, so the detected ripples provide a unique constraint on the particle nature of dark matter.
 % - and a sensitive test of the particle nature of dark matter (predict different density profiles, and therefore mass-loss histories)
 % %
 % Galaxies and their dark-matter halos grow through accretion of smaller galaxies (theory cit), which has been abundantly documented in the Milky Way.
@@ -84,36 +87,35 @@ The mass-loss rates of dark-matter halos depend sensitively on their density pro
 % % - measure where the peaks are
 % % - kick off industry to constrain the locations of the peaks (test using chervin's models? share a notebook w the H3 selection function, potential we used)
 \end{abstract}
-\vspace{1cm}
+% \vspace{0.5cm}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-We used optical spectroscopy from the ``Hectochelle in the Halo at High-resolution'' (H3) survey\cite{conroy:2019} to select $13,063$ high signal-to-noise ($\rm{SNR}>5$) giant stars ($\log g<3.5$, where $g$ is surface gravity).
-The H3 survey targets are located in the northern sky ($\rm{Dec}>-20^\circ$), outside of the Milky Way disk plane ($|b|>30^\circ$) and at heliocentric distances larger than 2\,kpc.
-The H3 pipeline\cite{} produces precise radial velocity measurements ($\sigma_{V_r}<1\lesssim1\,\kms$) and spectro-photometric distances 
-Using proper motions from the Gaia Data Release 3\cite{}, and adopting the \package{astropy}v4.1 solar position\cite{}, we calculated 3D positions and 3D velocities for these stars.
-- angular momentum wrt to the Galactic disk, and assuming MWPotential, total orbital energies with exquisite precision, median  (check amina's paper for phrasing of ELz)
-
 \begin{figure*}
 \begin{center}
-\includegraphics[width=0.95\textwidth]{fig1.pdf}
-% \vspace{-4mm}
-\caption{
+\includegraphics[width=0.99\textwidth]{fig1.pdf}
+\vspace{-4mm}
+\caption{\small
 \textbf{Orbital phase-space of Milky Way stars.}
-{\bf Left panel:} Total orbital energies as a function of the $z$ component of orbital angular momentum (perpendicular to the Milky Way disk) of stars in the H3 survey.
+{\bf Left:} Total orbital energies as a function of the $z$ component of orbital angular momentum (perpendicular to the Milky Way disk) of stars in the H3 survey.
 Typical measurement uncertainties are shown as errorbars on top as a function of angular momentum.
 - ripples
-{\bf Right panels:} A resampled distribution of orbital energies, with each panel corresponding to a region of phase-space marked in the left panel.
-The number of stars in each panel is indicated in the top right.
+{\bf Right:} Distributions of orbital energies for disk (top) and halo (bottom) stars show a spectrum of orbital resonances at constant energy.
 - best-fit model
 }
-% \vspace{-4mm}
+\vspace{-4mm}
+\label{fig:elz}
 \end{center}
 \end{figure*}
 
-- fig 1 shows E-Lz (2 panels: one points, another kde, annotated?)
-- large scale clustering disk stars: left, GSE merger: center, retrograde shards: right, Sgr: top left + citations
-- due to unprecedented precision (errorbars around the plot), we also detect small-scale clustering in the disk and the radial debris
+We used optical spectroscopy from the ``Hectochelle in the Halo at High-resolution'' (H3) survey\cite{conroy:2019} to select $\approx20,000$ giant stars ($\log g<3.5$, where $g$ is surface gravity) and precisely map the orbital phase-space beyond the Milky Way disk plane (the H3 survey targets are located at high Galactic latitudes, $|b|>30^\circ$, and between 2\,kpc and 100\,kpc from the Sun).
+The H3 data reduction pipeline\cite{cargile:2020} combines these spectra with optical through infrared photometry, and for this sample measures extremely precise radial velocities and distances (90-th percentile uncertainties of $0.5\,\kms$ and 14\%, respectively).
+Using proper motions from the Gaia Data Release 3\cite{gaiaedr3}, and adopting the \package{astropy}~v4.1 solar position\cite{astropy:2022} and \package{gala}~\package{MilkyWayPotential2022} gravitational potential model\cite{gala}, we calculated 3D positions and 3D velocities for these stars, as well as their orbital energies, $E_{tot}$, and angular momenta with respect to the disk plane, $L_z$.
+
+
+The energy--angular momentum phase space of H3 giants is shown in the left panel of Figure~\ref{fig:elz}.
+Since these quantities are nearly-conserved through the cosmic history, stars of common origin have been identified as phase-space clusters: thick disk stars as the left envelope, the Gaia-Sausage-Enceladus merger\cite{belokurov:2018,helmi:2018} at $L_z\approx0$, Sequoia merger\cite{myeong:2019,naidu:2020} on the right, and tidal debris of the Sagittarius (Sgr) dwarf galaxy\cite{ibata:2001,johnson:2020} at top left.
+Thanks to the exquisite precision of the recovered orbital parameters (typical uncertainties are shown at the top), these data also reveal substructure in the two major components: a series of ripples at constant density both in the disk (marked with orange arrows) and in the GSE merger (blue arrows).
 
 - energy histograms (panel in fig 1)
 - bootstraps
@@ -144,7 +146,7 @@ The number of stars in each panel is indicated in the top right.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % \bibliographystyle{naturemag}
-\bibliography{references}
+{\small\bibliography{references}}
 
 \begin{addendum}
   
@@ -201,7 +203,8 @@ The number of stars in each panel is indicated in the top right.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\newpage
+% \newpage
+\pagebreak
 
 \setcounter{page}{1}
 \setcounter{figure}{0}
@@ -215,13 +218,18 @@ The number of stars in each panel is indicated in the top right.
 \end{center}
 
 \noindent
-{\bf Identification of giants / selection effects}
+{\bf Significance of the detection}
+- identification of giants
+- selection function
 
-{\bf In-situ, bursty star formation?}
+{\bf Alternative sources of perturbation}
+- In-situ, bursty star formation?
+- Bar?
 
-{\bf Bar?}
-
-{\bf Dependence on the overall potential}
+{\bf Orbital history reconstruction}
+- Dependence on the overall potential
+- dynamical friction on/off
+- grid of Sgr models (distance dependence + mass-loss)
 
 
 \end{document}
