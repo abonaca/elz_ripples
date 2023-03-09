@@ -112,36 +112,52 @@ We used optical spectroscopy from the ``Hectochelle in the Halo at High-resoluti
 The H3 data reduction pipeline\cite{cargile:2020} combines these spectra with optical through infrared photometry, and for this sample measures extremely precise radial velocities and distances (90-th percentile uncertainties of $0.5\,\kms$ and 14\%, respectively).
 Using proper motions from the Gaia Data Release 3\cite{gaiaedr3}, and adopting the \package{astropy}~v4.1 solar position\cite{astropy:2022} and \package{gala}~\package{MilkyWayPotential2022} gravitational potential model\cite{gala}, we calculated 3D positions and 3D velocities for these stars, as well as their orbital energies, $E_{tot}$, and angular momenta with respect to the disk plane, $L_z$.
 
-
 The energy--angular momentum phase space of H3 giants is shown in the left panel of Figure~\ref{fig:elz}.
 Since these quantities are nearly-conserved through the cosmic history, stars of common origin have been identified as phase-space clusters: thick disk stars as the left envelope, the Gaia-Sausage-Enceladus merger\cite{belokurov:2018,helmi:2018} at $L_z\approx0$, Sequoia merger\cite{myeong:2019,naidu:2020} on the right, and tidal debris of the Sagittarius (Sgr) dwarf galaxy\cite{ibata:2001,johnson:2020} at top left.
 Thanks to the exquisite precision of the recovered orbital parameters (typical uncertainties are shown at the top), these data also reveal substructure in the two major components: a series of ripples at constant density both in the disk (marked with orange arrows) and in the GSE merger (blue arrows).
 
-- energy histograms (panel in fig 1)
-- bootstraps
-- fit mixture of gaussians
-- auxiliary materials: non-bootstrapped version, function of snr; number of components
+Right panels of Figure~\ref{fig:elz} show energy histograms for groups of stars with the most prominent ripples: eccentric thick-disk stars (top, $0.35<circ<0.7$, $L_z<0$) and prograde GSE halo stars (bottom, $0.7<ecc<0.9$, $L_z<0$).
+- measure peaks on KDE (bandwidth approx width of the peak 0.05) -- details in methods
+- number of prominent peaks
+- within uncertainties, same positions in the disk and the halo
+- approximately uniformly spaced by yy $kpc^2 Myr^{-2}$ or $(xx km/s)^2$
+% - fit mixture of gaussians
+% - auxiliary materials: non-bootstrapped version, function of snr; number of components
 
-- why exciting: ringing -- disequilibrium easily mapped to dynamical history
+- seen throughout the galaxy implies the driver is a global dynamical perturbation
+- options: bar (not active above the plane, cit + methods) or merger
+- from timing: Sgr the only prominent merger after td formation (cit)
+% - why exciting: ringing -- disequilibrium easily mapped to dynamical history
 
-- alternative: distinct accretion events
-- smaller accretion events present, not obvious as overdensities\cite{naidu:2020}
-- test through chemistry (fig 2)
-- largely the same
+% - alternative: distinct accretion events
+% - smaller accretion events present, not obvious as overdensities\cite{naidu:2020}
+% - test through chemistry -- largely the same
 
-- sim figure
+- details of the simulation: realistic thick disk + GSE
+- best fit model: Sgr evolved w dynamical friction + mass-loss
+- quantify agreement
 
-- details of the simulation
+- describe fig 2: peaks measure the total orbital history
+- what do peaks correspond to in relation to Sgr orbit?
+- examples of no mass-loss, best-fit, too much
 
-- discrepancies
+- exciting that we are sensitive to mass-loss: depends directly on the mass profile of the dwarf
+- encodes dm physics, but long-standing question, hard to observe directly
+- more broadly orbital decay most fundamental process in astrophysics -- Sgr can serve as standard for calibration
 
-- comparison to other perturbations
+- implications for MW
+- can disentangle Sgr from other effects, observed throughout the disk
 
-- what we'll learn from this
--- subhalo survival related to expected dm annihilation rates)
--- vdbosch: Accurately predicting the demographics of dark matter (DM) substructure is of paramount importance for many fields of astrophysics, including gravitational lensing, galaxy evolution, halo occupation modelling, and constraining the nature of DM.
--- so far, dm tidal disruption only theoretical, plagued by resolution issues
--- here empirical!
+- limitations + next steps
+- idealized Sgr models -- great that CDF works + matches most peaks, but that's just an approximation, so should do better w self-consistent N-body sims and explore deviations at high energy
+% - discrepancies
+% - comparison to other perturbations
+
+% - what we'll learn from this
+% -- subhalo survival related to expected dm annihilation rates)
+% -- vdbosch: Accurately predicting the demographics of dark matter (DM) substructure is of paramount importance for many fields of astrophysics, including gravitational lensing, galaxy evolution, halo occupation modelling, and constraining the nature of DM.
+% -- so far, dm tidal disruption only theoretical, plagued by resolution issues
+% -- here empirical!
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
