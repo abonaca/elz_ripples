@@ -253,11 +253,20 @@ def kde_fit():
     t = Table.read('../data/rcat_giants.fits')
     ind = (t['SNR']>5)
     t = t[ind]
+    N = len(t)
     
     etot_err = (t['E_tot_pot1_err']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
     
+    # get energy in updated potential
+    c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    etot = orbit.energy()[0].reshape(N,-1)
+    
+    
     # load ELz samples
-    pkl = pickle.load(open('../data/elz_samples.5.pkl', 'rb'))
+    #pkl = pickle.load(open('../data/elz_samples.5.pkl', 'rb'))
     
     # load disk ridgeline
     par = np.load('../data/elz_ridgeline_giants.5.npy')
@@ -273,17 +282,22 @@ def kde_fit():
     ind_3 = (t['Lz']<-0.2) & (t['Lz']>-0.5)
     ind_4 = (t['Lz']<0) & (t['Lz']>-0.2)
     
+    ind_halo = (t['Lz']<0) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.95)
+    ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.35) & (t['circLz_pot1']<0.6)
+    
     x = np.linspace(-0.18,-0.06,1000)
     
     
     plt.close()
     plt.figure(figsize=(12,6))
     
-    for ind in [ind_1, ind_2, ind_3, ind_4]:
+    #for ind in [ind_1, ind_2, ind_3, ind_4]:
+    for e, ind in enumerate([ind_halo,ind_disk]):
         sigma_etot = np.median(etot_err[ind].value)
-        print(sigma_etot)
-        #kde = gaussian_kde(t['E_tot_pot1'][ind], bw_method=sigma_etot)
-        kde = gaussian_kde(pkl['etot'][ind].flatten(), bw_method=sigma_etot)
+        print(np.percentile(etot_err[ind].value, [50,99]))
+        sigma_etot = 0.05
+        kde = gaussian_kde(etot.ravel().value[ind & np.isfinite(etot.ravel().value)], bw_method=sigma_etot)
+        #kde = gaussian_kde(pkl['etot'][ind].flatten(), bw_method=sigma_etot)
         
         y = kde(x)
         plt.plot(x, y, '-')
@@ -315,8 +329,8 @@ def elz_ehist(snr=3):
     orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
     etot = orbit.energy()[0].reshape(N,-1)
     
-    ## load ELz samples
-    #pkl = pickle.load(open('../data/elz_samples.{:d}.pkl'.format(snr), 'rb'))
+    # load ELz samples
+    pkl = pickle.load(open('../data/elz_samples.{:d}.pkl'.format(snr), 'rb'))
     
     # load disk ridgeline
     par = np.load('../data/elz_ridgeline_giants.5.npy')
@@ -332,6 +346,7 @@ def elz_ehist(snr=3):
     
     ind = [ind_disk, ind_halo]
     color = ['darkorange', 'navy']
+    cmap = ['Oranges_r', 'Blues_r']
     labels = ['Disk (0.35<circ<0.7)', 'Halo (0.7<ecc<0.95)']
     
     #ind_1 = (dlz<0.3) & (t['Lz']<-0.5)
@@ -411,16 +426,20 @@ def elz_ehist(snr=3):
     for i in range(2):
         plt.sca(ax[i+1])
     
-        #plt.hist(t['E_tot_pot1'][ind[i]], bins=ebins, density=True, histtype='step')
-        #plt.hist(pkl['etot'][ind[i]].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.8, lw=1.5)
-        n, b, bars = plt.hist(etot[ind[i]].ravel().value, bins=ebins, density=True, histtype='stepfilled', color=color[i], alpha=0.2, lw=1.5, label=labels[i])
-
-        ind_snr = t['SNR']>10
-        #ind_snr = etot_err<0.0025*u.kpc**2*u.Myr**-2
-        #plt.hist(t['E_tot_pot1'][ind[i] & ind_snr], bins=ebins, density=True, histtype='step')
-        #plt.hist(pkl['etot'][ind[i] & ind_snr].ravel().value, bins=ebins, density=True, histtype='step')
+        n, b, bars = plt.hist(etot[ind[i]].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.2, lw=1.5, label=labels[i])
+        #n, b, bars = plt.hist(pkl['etot'][ind[i] & (t['SNR']>10*(1+i))].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.2, lw=1.5, label=labels[i])
         
-        #plt.text(0.98,0.9, '{:d}'.format(np.sum(ind[i])), transform=plt.gca().transAxes, fontsize='small', va='top', ha='right')
+        vert = bars[0].get_xy()
+        Nb = np.size(b)
+        x = vert[:,0][:2*Nb][::2][:-1]
+        w = b[1] - b[0]
+        y = vert[:,1][:2*Nb][1::2][:-1]
+        
+        grad = np.atleast_2d(np.linspace(0,1,256)**0.6).T
+        lim = plt.gca().get_xlim() + plt.gca().get_ylim()
+        for j in range(Nb-1):
+            plt.imshow(grad, extent=[x[j],x[j]+w,0,y[j]], aspect='auto', zorder=0, cmap=cmap[i])
+        plt.gca().axis(lim)
         
         plt.xlim(-0.16, -0.08)
         plt.ylabel('Density')
@@ -431,20 +450,7 @@ def elz_ehist(snr=3):
     
     plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
     
-    #grad = np.atleast_2d(np.linspace(0,1,256)).T
-    ##ax = plt.gca()
-    #lim = plt.gca().get_xlim() + plt.gca().get_ylim()
-    #for bar in bars:
-        #print(bar)
-        #bar.set_zorder(1)
-        #bar.set_facecolor("none")
-        #x,y = bar.get_xy()[0]
-        ##w,h = bar.get_width(), bar.get_height()
-        #h = y
-        #print(h)
-        #w = np.abs(b[1]-b[0])
-        #plt.imshow(grad, extent=[x,x+w,0,h], aspect="auto", zorder=0, cmap='Blues')
-    #plt.gca().axis(lim)
+    
 
     
     # show gaps
@@ -457,7 +463,7 @@ def elz_ehist(snr=3):
         plt.arrow(1.5, e, -0.5, 0., color=color[1], alpha=0.5, head_length=0.2, zorder=1)
         for i in range(2):
             plt.sca(ax[i+1])
-            plt.axvline(e, color='k', ls=':', lw=0.5)
+            plt.axvline(e, color='k', ls=':', lw=1.5)
     
     plt.savefig('../paper/fig1.pdf')
 
