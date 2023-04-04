@@ -582,7 +582,7 @@ def initialize_nhalo(Nrand=50000, seed=2572, ret=True, graph=False):
         
         plt.sca(ax[0])
         plt.plot(lz, etot, 'k.', ms=3, alpha=0.1, mew=0, zorder=0)
-        plt.plot(t['Lz'], t['E_tot_pot1'], 'o', color='tab:orange', zorder=0, ms=1, alpha=0.1)
+        #plt.plot(t['Lz'], t['E_tot_pot1'], 'o', color='tab:orange', zorder=0, ms=1, alpha=0.1)
         
         plt.xlim(-6,6)
         plt.ylim(-0.3, -0.02)
@@ -1485,7 +1485,7 @@ def evolve_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, a=1*u.kpc, Napo=5, mw_label='h
     fout.close()
 
 
-def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo=5, mw_label='halo', Nrand=50000, seed=3928, Nskip=1, iskip=0, snap_skip=100, test=False, graph=True, verbose=True):
+def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo=5, mw_label='halo', Nrand=50000, seed=3928, Nskip=1, iskip=0, snap_skip=100, df=True, test=False, graph=True, verbose=True):
     """
     Initialize at apocenter
     d - Sgr heliocentric distance (default 27 kpc, reasonable range: 24-28 kpc, Vasiliev)
@@ -1572,7 +1572,11 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
     #T = 2*u.Myr
     
     t1 = time.time()
-    x1, x2, x3, v1, v2, v3 = interact.df_interact(par_perturb, fm*m.si.value, fa*a.si.value, xp.to(u.m).value, vp.to(u.m/u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
+    if df:
+        x1, x2, x3, v1, v2, v3 = interact.df_interact(par_perturb, fm*m.si.value, fa*a.si.value, xp.to(u.m).value, vp.to(u.m/u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
+    else:
+        Tenc = 0*u.Gyr
+        x1, x2, x3, v1, v2, v3 = interact.general_interact(par_perturb, xp.to(u.m).value, vp.to(u.m/u.s).value, Tenc.to(u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
     t2 = time.time()
     
     if verbose:
@@ -1590,7 +1594,7 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
     
     # save
     outdict = dict(cg=cg_, etot=etot_, lz=lz_)
-    root = 'interact_d.{:.1f}_m.{:.1f}.{:.1f}_a.{:02.0f}.{:.1f}_{:s}_N.{:06d}'.format(d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
+    root = 'interact{:d}_d.{:.1f}_m.{:.1f}.{:.1f}_a.{:02.0f}.{:.1f}_{:s}_N.{:06d}'.format(df, d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
     pickle.dump(outdict, open('../data/models/model_{:s}.pkl'.format(root), 'wb'))
     
     if graph:
@@ -1651,6 +1655,111 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
         plt.tight_layout()
         plt.savefig('../plots/phasespace_{:s}.png'.format(root))
 
+def massloss_history():
+    """"""
+    
+    h = 0.7
+    om = 0.3
+    rvir = 163*h**-1 * om**(-1/3)
+    
+    N = 100
+    x = np.zeros(N)*u.kpc
+    y = np.zeros(N)*u.kpc
+    z = np.linspace(0.1, 1.2*rvir, N)*u.kpc
+    z = np.logspace(0, np.log10(1.2*rvir), N)*u.kpc
+    c = coord.Galactocentric(x=x, y=y, z=z)
+    
+    q = np.array([x.value, y.value, z.value]).T
+    
+    menc = np.empty(N)*u.Msun
+    for i in range(N):
+        menc[i] = ham.potential.mass_enclosed(q[i])
+    
+    rg = c.spherical.distance
+    m = np.logspace(8,11,10)*u.Msun
+    rs = 10*u.kpc
+    rt = rg * (m[:,np.newaxis]/(3*menc))**(1/3) / rs
+    
+    f = 0.01
+    dm = f*m[:,np.newaxis]/rt
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(10,8), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.plot(rg, rt.T, '-')
+    
+    plt.axvline(rvir)
+    plt.axhline(1)
+    plt.gca().set_xscale('log')
+    plt.gca().set_yscale('log')
+    plt.ylabel('$r_t$ / $r_s$')
+    
+    plt.sca(ax[1])
+    plt.plot(rg, dm.T, '-')
+    
+    plt.axvline(rvir)
+    plt.gca().set_yscale('log')
+    plt.ylabel('$\delta m$ [$M_\odot$/Myr]')
+    plt.xlabel('$r_{gal}$ [kpc]')
+
+    plt.tight_layout()
+
+def sgr_minit(d=27*u.kpc):
+    """"""
+    c_sgr = coord.ICRS(ra=283.76*u.deg, dec=-30.48*u.deg, distance=d, radial_velocity=142*u.km/u.s, pm_ra_cosdec=-2.7*u.mas/u.yr, pm_dec=-1.35*u.mas/u.yr)
+    cg_sgr = c_sgr.transform_to(coord.Galactocentric())
+    w0 = gd.PhaseSpacePosition(c_sgr.transform_to(gc_frame).cartesian)
+    
+    dt = 1*u.Myr
+    T = 3*u.Gyr
+    nstep = int((T/dt).decompose())
+    orbit = ham.integrate_orbit(w0, dt=-dt, n_steps=nstep)
+    
+    q = np.array([orbit.x.value, orbit.y.value, orbit.z.value]).T
+    N = np.size(orbit.x)
+    
+    menc = np.empty(N)*u.Msun
+    for i in range(N):
+        menc[i] = ham.potential.mass_enclosed(q[i])
+    
+    rg = orbit.spherical.distance
+    m = np.logspace(8,11,4)*u.Msun
+    rs = 10*u.kpc
+    rt = rg * (m[:,np.newaxis]/(3*menc))**(1/3) / rs
+    
+    f = 1e-3
+    dm = f*m[:,np.newaxis]/rt
+    
+    h = 0.7
+    om = 0.3
+    rvir = 163*h**-1 * om**(-1/3)
+    
+    m_inc = np.sum(dm, axis=1)
+    print(m_inc, m, m+m_inc)
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(10,8), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.plot(rg, rt.T, '-')
+    
+    plt.axvline(rvir)
+    plt.axhline(1)
+    plt.gca().set_xscale('log')
+    plt.gca().set_yscale('log')
+    plt.ylabel('$r_t$ / $r_s$')
+    
+    plt.sca(ax[1])
+    plt.plot(rg, dm.T, '-')
+    
+    plt.axvline(rvir)
+    plt.gca().set_yscale('log')
+    plt.ylabel('$\delta m$ [$M_\odot$/Myr]')
+    plt.xlabel('$r_{gal}$ [kpc]')
+
+    plt.tight_layout()
+
 
 def batch_interact():
     """Run the C interaction code for a grid of input parameters"""
@@ -1670,7 +1779,7 @@ def br():
             interact_sgr_stars(mw_label='ndisk', Nrand=50000, m=2e10*u.Msun, d=d_, fm=fm_, graph=False, verbose=True)
 
 
-from colorio.cs import ColorCoordinates
+#from colorio.cs import ColorCoordinates
 
 def grid_cmap():
     """Develop a 2D colormap for plotting a grid of histograms"""

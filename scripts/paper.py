@@ -385,7 +385,8 @@ def elz_ehist(snr=3):
     # E-Lz
     
     plt.sca(ax[0])
-    plt.plot(t['Lz'], etot, 'ko', ms=1.5, mew=0, alpha=0.3)
+    plt.scatter(t['Lz'], etot, c=t['SNR'], cmap='binary', ec='none', s=3, vmin=2, vmax=7, alpha=0.3)
+    #plt.plot(t['Lz'], etot, 'ko', ms=1.5, mew=0, alpha=0.3)
     #plt.plot(pkl['lz'], pkl['etot'], 'ko', ms=1, mew=0, alpha=0.005, rasterized=True)
     
     #alpha = 0.2
@@ -465,7 +466,8 @@ def elz_ehist(snr=3):
             plt.sca(ax[i+1])
             plt.axvline(e, color='k', ls=':', lw=1.5)
     
-    plt.savefig('../paper/fig1.pdf')
+    #plt.savefig('../paper/fig1.pdf')
+    plt.savefig('../paper/fig1.png')
 
 
 def elzhist_ehist(snr=3):
@@ -615,7 +617,7 @@ def elzhist_ehist(snr=3):
             plt.sca(ax[i+1])
             plt.axvline(e, color='k', ls=':', lw=1.5)
     
-    plt.savefig('../paper/fig1.pdf')
+    plt.savefig('../paper/fig1_2dhist.pdf')
 
 
 ##########
