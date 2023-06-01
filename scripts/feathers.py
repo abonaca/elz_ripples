@@ -18,7 +18,7 @@ from galpy.potential import MWPotential2014
 
 from scipy.optimize import minimize, root
 import functools
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, binned_statistic_2d
 from scipy import ndimage
 from skimage.filters import unsharp_mask
 from scipy.fft import fft, ifft, fftfreq
@@ -285,6 +285,218 @@ def long_orbits_sgr():
         
         out = dict(t=orbit.t, w=orbit.w().T)
         pkl = pickle.dump(out, open('../data/long_orbits/sgr.{:05d}.pkl'.format(i), 'wb'))
+
+
+###########
+# Periods #
+###########
+def get_periods(calculate=True):
+    """Calculate periods in the new gravitational potential of the Milky Way"""
+    
+    t = Table.read('../data/rcat_giants.fits')
+    
+    if calculate:
+        c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+        w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+        
+        N = len(t)
+        p = np.zeros(N) * u.Myr
+        dt = 1*u.Myr
+        
+        for i in range(N):
+            T = 5*t['orbit_period_pot1'][i]*u.Myr
+            Nstep = int((T/dt).decompose())
+            orbit = ham.integrate_orbit(w0[i], dt=-dt, n_steps=Nstep)
+            p[i] = np.abs(orbit.estimate_period(radial=True))
+        
+        t['orbit_period_pot2'] = p
+        pickle.dump(p, open('../data/giants_radial_periods.pkl', 'wb'))
+        t.write('../data/rcat_giants.fits', overwrite=True)
+    
+    res = 1 - t['orbit_period_pot2'].value/t['orbit_period_pot1']
+    
+    plt.close()
+    plt.figure(figsize=(12,6))
+    
+    plt.axhline(0, color='r')
+    plt.plot(t['orbit_period_pot1'], res, 'ko', ms=1, alpha=0.1)
+    
+    plt.text(0.95,0.1, 'median = {:.2f}\nstd = {:.2f}'.format(np.median(res), np.std(res)), ha='right', fontsize='small', transform=plt.gca().transAxes)
+    plt.xlabel('P$_{old}$ [Myr]')
+    plt.ylabel('1 - P$_{new}$ / P$_{old}$')
+    plt.ylim(-0.05, 0.05)
+    plt.xlim(0,2000)
+    
+    plt.tight_layout()
+    plt.savefig('../plots/new_periods.png')
+    
+def period_resonances(snr=3, log=False):
+    """"""
+    
+    t = Table.read('../data/rcat_giants.fits')
+    ind = t['SNR']>snr
+    t = t[ind]
+    
+    ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.3) & (t['circLz_pot1']<0.7)
+    ind_halo = (t['Lz']<0) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.9)
+    ind_sgr = (t['Sgr_FLAG']==1)
+    
+    # bar
+    omega_bar = np.array([38,41,44])*u.km/u.s/u.kpc
+    P_bar = (2*np.pi/omega_bar).to(u.Myr).value
+    
+    # Sgr
+    d = np.array([26,26.5,27])*u.kpc
+    dt = 1*u.Myr
+    T = 5*u.Gyr
+    Nstep = int((T/dt).decompose())
+    P_sgr = np.zeros(3) * u.Myr
+    
+    for i in range(3):
+        c_sgr = coord.ICRS(ra=283.76*u.deg, dec=-30.48*u.deg, distance=d[i], radial_velocity=142*u.km/u.s, pm_ra_cosdec=-2.7*u.mas/u.yr, pm_dec=-1.35*u.mas/u.yr)
+        w0_sgr = gd.PhaseSpacePosition(c_sgr.transform_to(gc_frame).cartesian)
+        
+        orbit_sgr = ham.integrate_orbit(w0_sgr, dt=-dt, n_steps=Nstep)
+        P_sgr[i] = np.abs(orbit_sgr.estimate_period(radial=True))
+    
+    if log:
+        pbins = np.logspace(np.log10(50),np.log10(1000),130)
+    else:
+        pbins = np.linspace(50,1000,200)
+    
+    labels = ['Disk (0.35<circ<0.7)', 'Halo (0.7<ecc<0.95)']
+    y_label = [75, 85]
+    lw = 2
+    
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(12,8), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.hist(t['orbit_period_pot2'][ind_disk], bins=pbins, density=False, histtype='step', color='r', lw=lw)
+    plt.ylabel('Number [Myr$^{-1}$]')
+    
+    plt.sca(ax[1])
+    plt.hist(t['orbit_period_pot2'][ind_halo], bins=pbins, density=False, histtype='step', color='navy', lw=lw)
+    
+    for i in range(2):
+        plt.sca(ax[i])
+        # resonances
+        for j in range(3):
+            plt.axvline(P_bar[j], ls=':', color='k', lw=0.5)
+            plt.axvline(P_sgr[j].value, ls='--', color='k', lw=0.5)
+        
+        # resonance labels
+        plt.text(P_bar[1], y_label[i], 'Bar', ha='center', fontsize='small')
+        plt.text(P_sgr[1].value, y_label[i], 'Sgr', ha='center', fontsize='small')
+        
+        # legends
+        plt.text(0.03, 0.87, labels[i], transform=plt.gca().transAxes, fontsize='small')
+    
+    if log:
+        plt.gca().set_xscale('log')
+    plt.xlim(50,1000)
+    
+    plt.xlabel('Period [Myr]')
+    plt.ylabel('Number [Myr$^{-1}$]')
+    
+    plt.tight_layout(h_pad=0)
+    plt.savefig('../plots/period_resonances_log.{:d}_snr.{:d}.png'.format(log, snr))
+
+def period_spectrum(snr=3, log=False, res_label='sgr'):
+    """"""
+    
+    t = Table.read('../data/rcat_giants.fits')
+    ind = t['SNR']>snr
+    t = t[ind]
+    
+    ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.3) & (t['circLz_pot1']<0.7)
+    ind_halo = (t['Lz']<0) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.9)
+    ind_sgr = (t['Sgr_FLAG']==1)
+    
+    # bar
+    omega_bar = np.array([38,41,44])*u.km/u.s/u.kpc
+    P_bar = (2*np.pi/omega_bar).to(u.Myr).value
+    
+    # Sgr
+    d = np.array([26,26.5,27])*u.kpc
+    d = np.array([26,26.5,27])*u.kpc
+    dt = 1*u.Myr
+    T = 5*u.Gyr
+    Nstep = int((T/dt).decompose())
+    P_sgr = np.zeros(3) * u.Myr
+    
+    for i in range(3):
+        c_sgr = coord.ICRS(ra=283.76*u.deg, dec=-30.48*u.deg, distance=d[i], radial_velocity=142*u.km/u.s, pm_ra_cosdec=-2.7*u.mas/u.yr, pm_dec=-1.35*u.mas/u.yr)
+        w0_sgr = gd.PhaseSpacePosition(c_sgr.transform_to(gc_frame).cartesian)
+        
+        orbit_sgr = ham.integrate_orbit(w0_sgr, dt=-dt, n_steps=Nstep)
+        P_sgr[i] = np.abs(orbit_sgr.estimate_period(radial=True))
+    
+    if log:
+        pbins = np.logspace(np.log10(50),np.log10(1000),130)
+    else:
+        pbins = np.linspace(50,1000,200)
+    
+    # resonances
+    pres = np.array([4, 3, 2, 1, 1/2, 1/3., 1/4., 1/5., 1/6., 1/7., 1/8.])
+    pres = np.array([4, 3, 2, 1.5, 1, 1/2, 1/3., 1/4., 1/5., 1/6., 1/7., 1/8.])
+    Nres = np.size(pres)
+    
+    fres = []
+    for pr in pres:
+        fr = Fraction('{:f}'.format(pr)).limit_denominator(14)
+        fres += [fr]
+    
+    # plotting setup
+    labels = ['Disk (0.35<circ<0.7)', 'Halo (0.7<ecc<0.95)']
+    ymax = [81, 94]
+    lw = 2
+    
+    # make plot
+    plt.close()
+    fig, ax = plt.subplots(2,1,figsize=(12,8), sharex=True)
+    
+    plt.sca(ax[0])
+    plt.hist(t['orbit_period_pot2'][ind_disk], bins=pbins, density=False, histtype='step', color='r', lw=lw)
+    plt.ylabel('Number [Myr$^{-1}$]')
+    
+    plt.sca(ax[1])
+    plt.hist(t['orbit_period_pot2'][ind_halo], bins=pbins, density=False, histtype='step', color='navy', lw=lw)
+    
+    for i in range(2):
+        plt.sca(ax[i])
+        
+        # get ymax
+        _, ymax = plt.ylim()
+        
+        # resonances
+        for j in range(Nres):
+            if res_label=='sgr':
+                res = P_sgr[1].value*pres[j]
+            else:
+                res = P_bar[1]*pres[j]
+            plt.axvline(res, ls='--', color='k', lw=0.5)
+        
+            # resonance labels
+            l = 'P$_{{orb}}$:$P_{{{2:s},orb}}$ = {0:d}:{1:d}'.format(fres[j].denominator, fres[j].numerator, res_label)
+            l = '{0:d}:{1:d}'.format(fres[j].denominator, fres[j].numerator)
+            
+            if (res>50) & (res<1000):
+                plt.text(0.99*res, 0.97*ymax, l, rotation=90, ha='right', va='top', fontsize='x-small')
+            
+        # legends
+        plt.text(0.03, 0.87, labels[i], transform=plt.gca().transAxes, fontsize='small')
+        plt.text(0.03, 0.8, '{:s} resonances'.format(res_label), transform=plt.gca().transAxes, fontsize='small')
+    
+    if log:
+        plt.gca().set_xscale('log')
+    plt.xlim(50,1000)
+    
+    plt.xlabel('Period [Myr]')
+    plt.ylabel('Number [Myr$^{-1}$]')
+    
+    plt.tight_layout(h_pad=0)
+    plt.savefig('../plots/period_spectrum_log.{:d}_snr.{:d}_res.{:s}.png'.format(log, snr, res_label))
 
 
 def get_orbit(i1, i2, verbose=False, tracer='giants', test=True):
@@ -676,10 +888,15 @@ def geometry(snr=3, d=26):
 def ehist(snr=3, d=26):
     """Plot energy histograms of H3 disk and halo, overplot models perturbed by Sgr w mass-loss and dynamical friction"""
     t = Table.read('../data/rcat_giants.fits')
+    #t = Table.read('../data/segue_giants.fits')
+    #t = Table.read('../data/rcat_all.fits')
+    #ind_finite = np.isfinite(t['Z_gal'])
+    #print(np.percentile(np.abs(t['Z_gal'][ind_finite]), [1,5,50,95,99]))
     ind = (t['SNR']>snr)
     t = t[ind]
     N = len(t)
-    print(N, np.percentile(t['Vrad_err'], [50,90]), np.percentile(t['dist_adpt_err']/t['dist_adpt'], [50,90]), np.percentile(t['dist_adpt'], [0.1,99.9]))
+    
+    #print(N, np.percentile(t['Vrad_err'], [50,90]), np.percentile(t['dist_adpt_err']/t['dist_adpt'], [50,90]), np.percentile(t['dist_adpt'], [0.1,99.9]))
     
     # get energy in updated potential
     c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
@@ -689,6 +906,7 @@ def ehist(snr=3, d=26):
     etot = orbit.energy()[0].reshape(N,-1)
     
     ind_halo = (t['Lz']<0) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.9)
+    ind_halo = (t['eccen_pot1']>0.7)
     ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.3) & (t['circLz_pot1']<0.7)
     
     #ind_halo = (t['Lz']<10) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.9)
@@ -727,6 +945,8 @@ def ehist(snr=3, d=26):
     
     plt.sca(ax[0])
     plt.hist(etot[ind_disk].value, bins=ebins, density=True, histtype='stepfilled', alpha=0.3, label='H3 disk (0.3<circ<0.7)')
+    #plt.hist(etot[ind_disk & (np.abs(t['Z_gal'])<2)].value, color='r', bins=ebins, density=True, histtype='step', alpha=0.3, label='H3 halo (0.7<ecc<0.9) |Z|<1.5')
+    #plt.hist(etot[ind_disk & (np.abs(t['Z_gal'])>2)].value, color='b', bins=ebins, density=True, histtype='step', alpha=0.3, label='H3 halo (0.7<ecc<0.9) |Z|<1.5')
     plt.hist(mdisk['etot'][ind_mdisk], color='darkorange', bins=ebins, density=True, histtype='step', alpha=0.4, label='Model disk (scaled N21 disk)')
 
     plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
@@ -734,6 +954,8 @@ def ehist(snr=3, d=26):
     
     plt.sca(ax[1])
     plt.hist(etot[ind_halo].value, bins=ebins, density=True, histtype='stepfilled', alpha=0.3, label='H3 halo (0.7<ecc<0.9)')
+    #plt.hist(etot[ind_halo & (np.abs(t['Z_gal'])<2)].value, color='r', bins=ebins, density=True, histtype='step', alpha=0.3, label='H3 halo (0.7<ecc<0.9) |Z|<1.5')
+    #plt.hist(etot[ind_disk & (np.abs(t['Z_gal'])>2)].value, color='b', bins=ebins, density=True, histtype='step', alpha=0.3, label='H3 halo (0.7<ecc<0.9) |Z|<1.5')
     plt.hist(mhalo['etot'][ind_mhalo], color='darkorange', bins=ebins, density=True, histtype='step', alpha=0.4, label='Model halo (N21 GSE)')
     
     plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
@@ -757,6 +979,11 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     N = len(t)
     print(N)
     
+    c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    etot = orbit.energy()[0]
+    
     # weights
     ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err']))
     sigma_etot = (np.nanmedian(t['E_tot_pot1_err'][ind_finite])*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value
@@ -772,12 +999,12 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     be_lz = np.linspace(-6, 6, Nbin)
     be_etot = np.linspace(-0.18, -0.02, Nbin)
     
-    h, xe, ye = np.histogram2d(t['Lz'], t['E_tot_pot1'], bins=(be_lz, be_etot), weights=w)
+    h, xe, ye = np.histogram2d(t['Lz'], etot, bins=(be_lz, be_etot), weights=w)
     h += 0.1
     
     detot = be_etot[1] - be_etot[0]
     dlz = be_lz[1] - be_lz[0]
-    sigma_smooth = np.array([sigma_etot/detot, sigma_lz/dlz]) * 0.5
+    sigma_smooth = np.array([sigma_etot/detot, sigma_lz/dlz]) * 0.3
     print(sigma_smooth)
     
     h_smooth = ndimage.gaussian_filter(h, sigma_smooth)
@@ -786,6 +1013,12 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     h_sy = ndimage.sobel(h_smooth, axis=1, mode='constant')
     h_edge = np.hypot(h_sx, h_sy)
     
+    # circularity
+    h_circ, xe, ye, bn = binned_statistic_2d(t['Lz'], etot, t['circLz_pot1']*np.sign(t['Lz']), statistic='median', bins=(be_lz, be_etot))
+    ind_ = ~np.isfinite(h_circ)
+    h_circ[ind_] = 1e-5
+    h_circs = ndimage.gaussian_filter(h_circ, sigma_smooth)
+    
     # colorbar scaling
     if tracer=='giants':
         vmax = 1
@@ -793,10 +1026,10 @@ def elz_hist(snr=3, tracer='giants', weight=False):
         vmax = None
     
     plt.close()
-    fig, ax = plt.subplots(1,2,figsize=(14,7), sharex=True, sharey=True)
+    fig, ax = plt.subplots(1,4,figsize=(16,4.6), sharex=True, sharey=True)
     
     plt.sca(ax[0])
-    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
+    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(vmax=vmax), interpolation='none', cmap='binary')
     #plt.imshow(h.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
     
     plt.xlim(-6,6)
@@ -804,16 +1037,23 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    plt.title('Smooth, lognorm', fontsize='small')
     
     plt.sca(ax[1])
-    plt.imshow(h_edge.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary', vmax=vmax)
+    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary', vmax=vmax)
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.title('Smooth, linear', fontsize='small')
+
+    plt.sca(ax[2])
+    plt.imshow(h_circ.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='RdBu', vmin=-1, vmax=1)
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.title('circularity', fontsize='small')
     
     eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
-    for i in range(2):
+    for i in range(4):
         plt.sca(ax[i])
         for e in eridge:
-            plt.axhline(e, color='r', lw=0.2)
+            plt.axhline(e, color='r', lw=0.2, alpha=0.)
     
     plt.tight_layout()
     plt.savefig('../plots/elz_hist_{:s}_w.{:d}.png'.format(tracer, weight))
@@ -2776,7 +3016,9 @@ def period_hist_populations(offset=True, snr=5):
     """"""
     t = Table.read('../data/rcat_giants.fits')
     ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>snr)
+    ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.3) & (t['circLz_pot1']<0.7) & (t['SNR']>snr)
     ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>snr) # & (t['FeH']<-1)
+    ind_gse = (t['Lz']<0) & (t['eccen_pot1']>0.7) & (t['eccen_pot1']<0.9) & (t['SNR']>snr)
     ind_sgr = (t['Sgr_FLAG']==1) & (t['SNR']>snr)
     
     print(len(t))
@@ -2798,11 +3040,17 @@ def period_hist_populations(offset=True, snr=5):
     rbins = np.linspace(2,30,80)
     
     P = t['orbit_period_pot1'] / 947
-    pbins = np.linspace(0.06,0.6,80)
+    pbins = np.linspace(0.06,0.6,100)
+    pbins = np.logspace(np.log10(0.06),np.log10(1.5),130)
     
     pres = np.array([1/2, 5/11., 2/5., 1/3., 3/10., 3/11., 1/4., 2/9., 1/5., 1/6., 1/7., 1/10.])
     pres = np.array([1/2, 1/3., 3/10., 3/11., 1/4., 2/9., 1/5., 1/6., 1/7., 1/10., 1/14.])
+    pres = np.array([4, 3, 2, 1, 1/2, 1/3., 1/4., 1/5., 1/6., 1/7., 1/8.])
     Nres = np.size(pres)
+    
+    omega_bar = np.array([38,41,44])*u.km/u.s/u.kpc
+    P_bar = (2*np.pi/omega_bar).to(u.Myr) / 947
+    
     
     fres = []
     for pr in pres:
@@ -2850,6 +3098,12 @@ def period_hist_populations(offset=True, snr=5):
         plt.sca(ax[i])
         for res in pres:
             plt.axvline(res, color='k', lw=0.5, alpha=0.5)
+            plt.axvline(res*P[1], color='k', ls=':')
+        
+        # bar corrotation
+        #plt.axvline(P[0], color='k', ls=':')
+        #plt.axvline(P[1], color='k', ls=':')
+        #plt.axvline(P[2], color='k', ls=':')
     
     # resonance labels
     plt.sca(ax[0])
@@ -2858,9 +3112,12 @@ def period_hist_populations(offset=True, snr=5):
         l = 'P$_{{orb}}$:$P_{{Sgr,orb}}$ = {0:d}:{1:d}'.format(fres[i].denominator, fres[i].numerator)
         l = '{0:d}:{1:d}'.format(fres[i].denominator, fres[i].numerator)
         
-        plt.text(0.99*pres[i], 0.97*ymax, l, rotation=90, ha='right', va='top', fontsize='x-small')
+        if pres[i]<1:
+            plt.text(0.99*pres[i], 0.97*ymax, l, rotation=90, ha='right', va='top', fontsize='x-small')
     
+    plt.xlim(0.06,1.2)
     plt.ylim(0,5)
+    plt.gca().set_xscale('log')
     
     plt.tight_layout(h_pad=0)
     #plt.savefig('../plots/period_hist_populations_off.{:d}.png'.format(offset))
@@ -2869,8 +3126,8 @@ def periods():
     """"""
     t = Table.read('../data/rcat_giants.fits')
     ind_disk = (t['circLz_pot1']>0.3) & (t['Lz']<0) & (t['SNR']>3)
-    ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>3) & (t['omega_z']>0.001)# & (t['FeH']<-1)
-    ind_sgr = (t['Sgr_FLAG']==1) & (t['omega_z']>0.001)
+    ind_gse = (t['eccen_pot1']>0.7) & (t['Lz']<0.) & (t['SNR']>3)# & (t['omega_z']>0.001)# & (t['FeH']<-1)
+    ind_sgr = (t['Sgr_FLAG']==1) #& (t['omega_z']>0.001)
     
     Nbin = 100
     
@@ -3489,6 +3746,9 @@ def apogee_elz(zmax=False):
     t = Table(fits.getdata('../data/apogee_giants.fits'))
     #t = t[::5]
     if zmax:
+        ind = np.abs(t['galz'])<2
+        t = t[ind]
+    else:
         ind = np.abs(t['galz'])>2
         t = t[ind]
     print(t.colnames)
@@ -3497,12 +3757,12 @@ def apogee_elz(zmax=False):
     plt.close()
     plt.figure()
     
-    plt.plot(t['Lz'], t['E_tot_pot1'], 'k.', ms=1, mew=0, alpha=0.2)
+    plt.plot(t['Lz'], t['E_tot_pot1'], 'k.', ms=2, mew=0, alpha=0.2)
     
-    if not zmax:
-        eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
-        for e in eridge:
-            plt.axhline(e, color='r', lw=0.2)
+    #if not zmax:
+        #eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+        #for e in eridge:
+            #plt.axhline(e, color='r', lw=0.2)
     
     plt.xlim(-6,6)
     plt.ylim(-0.3, -0.02)

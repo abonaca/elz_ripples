@@ -385,8 +385,10 @@ def elz_ehist(snr=3):
     # E-Lz
     
     plt.sca(ax[0])
-    plt.scatter(t['Lz'], etot, c=t['SNR'], cmap='binary', ec='none', s=3, vmin=2, vmax=7, alpha=0.3)
+    #plt.scatter(t['Lz'], etot, c=t['SNR'], cmap='binary', ec='none', s=3, vmin=2, vmax=7, alpha=0.3)
+    #plt.scatter(t['Lz'], etot, c=t['SNR'], cmap='binary', ec='none', s=3, vmin=2, vmax=7, alpha=0.3)
     #plt.plot(t['Lz'], etot, 'ko', ms=1.5, mew=0, alpha=0.3)
+    plt.plot(t['Lz'], etot, 'ko', ms=3.5, mew=0, alpha=0.3)
     #plt.plot(pkl['lz'], pkl['etot'], 'ko', ms=1, mew=0, alpha=0.005, rasterized=True)
     
     #alpha = 0.2
@@ -398,6 +400,8 @@ def elz_ehist(snr=3):
     
     plt.xlim(-6,6)
     plt.ylim(-0.18, -0.02)
+    plt.xlim(-3.5,1.5)
+    plt.ylim(-0.18, -0.10)
     
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
@@ -469,8 +473,10 @@ def elz_ehist(snr=3):
     #plt.savefig('../paper/fig1.pdf')
     plt.savefig('../paper/fig1.png')
 
+from scipy import ndimage
 
-def elzhist_ehist(snr=3):
+
+def elzhist_ehist(snr=3, weight=False):
     """"""
     
     # load rcat
@@ -478,6 +484,16 @@ def elzhist_ehist(snr=3):
     ind = (t['SNR']>snr)
     t = t[ind]
     N = len(t)
+    
+    # weights
+    ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err']))
+    sigma_etot = (np.nanmedian(t['E_tot_pot1_err'][ind_finite])*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value
+    sigma_lz = (np.nanmedian(t['Lz_err'][ind_finite])*u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1).value
+    
+    if weight:
+        w = ((t['E_tot_pot1_err']/sigma_etot)**2 + (t['Lz_err']/sigma_lz)**2)**-0.5
+    else:
+        w = np.ones(N)
     
     lz_err = (t['Lz_err']*u.km*u.kpc*u.s**-1).to(u.kpc**2*u.Myr**-1)
     etot_err = (t['E_tot_pot1_err']*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2)
@@ -487,7 +503,21 @@ def elzhist_ehist(snr=3):
     w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
     
     orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
-    etot = orbit.energy()[0].reshape(N,-1)
+    etot = orbit.energy()[0]#.reshape(N,-1)
+    
+    #2D histogram
+    Nbin = 500
+    be_lz = np.linspace(-6, 6, Nbin)
+    be_etot = np.linspace(-0.18, -0.02, Nbin)
+    
+    h, xe, ye = np.histogram2d(t['Lz'], etot, bins=(be_lz, be_etot), weights=w)
+    h += 0.1
+    
+    detot = be_etot[1] - be_etot[0]
+    dlz = be_lz[1] - be_lz[0]
+    sigma_smooth = np.array([sigma_etot/detot, sigma_lz/dlz]) * 0.3
+    
+    h_smooth = ndimage.gaussian_filter(h, sigma_smooth)
     
     # load ELz samples
     pkl = pickle.load(open('../data/elz_samples.{:d}.pkl'.format(snr), 'rb'))
@@ -505,7 +535,7 @@ def elzhist_ehist(snr=3):
     ind_disk = (t['Lz']<0) & (t['circLz_pot1']>0.35) & (t['circLz_pot1']<0.7)
     
     ind = [ind_disk, ind_halo]
-    color = ['darkorange', 'navy']
+    color = ['darkorange', 'dodgerblue', 'navy']
     cmap = ['Oranges_r', 'Blues_r']
     labels = ['Disk (0.35<circ<0.7)', 'Halo (0.7<ecc<0.95)']
     
@@ -533,10 +563,11 @@ def elzhist_ehist(snr=3):
     be_etot = np.linspace(-0.18, -0.02, Nbin)
     
     H, xedges, yedges = np.histogram2d(t['Lz'], etot.ravel(), bins=(be_lz, be_etot))
-    H_norm_rows = H / H.max(axis=0, keepdims=True)
+    H_norm_rows = H / H.max(axis=1, keepdims=True)
     
     plt.sca(ax[0])
-    plt.imshow(H_norm_rows.T, aspect='auto', extent=[-6,6,-0.02,-0.18], cmap='binary', norm=mpl.colors.LogNorm(), interpolation='bicubic')
+    #plt.imshow(H_norm_rows.T, aspect='auto', extent=[-6,6,-0.02,-0.18], cmap='binary', norm=mpl.colors.LogNorm(), interpolation='bicubic')
+    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary', vmax=1)
     #plt.plot(t['Lz'], etot, 'ko', ms=1.5, mew=0, alpha=0.3)
     #plt.plot(pkl['lz'], pkl['etot'], 'ko', ms=1, mew=0, alpha=0.005, rasterized=True)
     
@@ -549,6 +580,8 @@ def elzhist_ehist(snr=3):
     
     plt.xlim(-6,6)
     plt.ylim(-0.18, -0.02)
+    #plt.xlim(-3.5,3.5)
+    #plt.ylim(-0.18, -0.10)
     
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
@@ -609,10 +642,12 @@ def elzhist_ehist(snr=3):
     egap = [-0.16397, -0.15766, -0.15249, -0.14117, -0.12969, -0.12403, -0.11891, -0.10511, -0.09767]
     eridge = np.array([-0.145, -0.134, -0.127, -0.122, -0.116, -0.107, -0.098])
     eridge = np.array([-0.145, -0.134, -0.127, -0.122, -0.116])
+    #eridge = np.array([-0.145, -0.134, -0.127, -0.1208, -0.116])
     for e in eridge:
         plt.sca(ax[0])
         plt.arrow(poly(e)-0.9, e, 0.5, 0., color=color[0], alpha=0.5, head_length=0.2)
-        plt.arrow(1.5, e, -0.5, 0., color=color[1], alpha=0.5, head_length=0.2, zorder=1)
+        #plt.arrow(1.5, e, -0.5, 0., color=color[1], alpha=0.5, head_length=0.2, zorder=1)
+        plt.arrow(0.8, e, -0.5, 0., color=color[1], alpha=0.5, head_length=0.2, zorder=1)
         for i in range(2):
             plt.sca(ax[i+1])
             plt.axvline(e, color='k', ls=':', lw=1.5)

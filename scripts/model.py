@@ -27,6 +27,7 @@ import scipy.stats
 from scipy.stats import gaussian_kde
 from scipy.optimize import minimize
 from scipy import ndimage
+from scipy.signal import find_peaks
 
 import pickle
 import h5py
@@ -1567,13 +1568,35 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
     par_pot = np.array([x_.si.value for x_ in par_gal])
     #print(ham.potential.parameters)
     
+    # trial orbit to find total simulation time (4 pericenters or 300kpc)
+    # orbit integration times
     dt = 0.5*u.Myr
-    T = 6*u.Gyr
-    #T = 2*u.Myr
+    T = 8*u.Gyr
+    direction = int(-1)
+    t = np.arange(0, direction*(T+dt).to(u.Myr).value, direction*dt.to(u.Myr).value)*u.Myr
+    
+    x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, m.to(u.kg).value, a.to(u.m).value, fm)
+    mass = mass*u.kg
+    
+    co = coord.Galactocentric(x=(x1*u.m).to(u.kpc), y=(x2*u.m).to(u.kpc), z=(x3*u.m).to(u.kpc), v_x=(v1*u.m/u.s).to(u.km/u.s), v_y=(v2*u.m/u.s).to(u.km/u.s), v_z=(v3*u.m/u.s).to(u.km/u.s))
+    
+    rgal = co.spherical.distance
+    ind_apo, _ = find_peaks(rgal)
+    ind_peri, _ = find_peaks(-rgal)
+    
+    if np.size(ind_apo)>=4:
+        Nstart = ind_apo[3]
+    else:
+        Nstart = np.argmin(np.abs(rgal - 300*u.kpc))
+    
+    # simulation time
+    dt = 0.5*u.Myr
+    T = np.abs(t[Nstart])
+    print(T)
     
     t1 = time.time()
     if df:
-        x1, x2, x3, v1, v2, v3 = interact.df_interact(par_perturb, fm*m.si.value, fa*a.si.value, xp.to(u.m).value, vp.to(u.m/u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
+        x1, x2, x3, v1, v2, v3 = interact.df_interact(par_perturb, m.si.value, fm, fa*a.si.value, xp.to(u.m).value, vp.to(u.m/u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
     else:
         Tenc = 0*u.Gyr
         x1, x2, x3, v1, v2, v3 = interact.general_interact(par_perturb, xp.to(u.m).value, vp.to(u.m/u.s).value, Tenc.to(u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
@@ -1594,8 +1617,17 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
     
     # save
     outdict = dict(cg=cg_, etot=etot_, lz=lz_)
-    root = 'interact{:d}_d.{:.1f}_m.{:.1f}.{:.1f}_a.{:02.0f}.{:.1f}_{:s}_N.{:06d}'.format(df, d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
+    root = 'interact{:d}_d.{:.1f}_m.{:.2f}.{:.2f}_a.{:02.1f}.{:.1f}_{:s}_N.{:06d}'.format(df, d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
     pickle.dump(outdict, open('../data/models/model_{:s}.pkl'.format(root), 'wb'))
+    
+    # Sgr orbit
+    direction = int(-1)
+    t = np.arange(0, direction*(T+dt).to(u.Myr).value, direction*dt.to(u.Myr).value)*u.Myr
+
+    x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, m.to(u.kg).value, a.to(u.m).value, fm)
+    
+    mass = (mass*u.kg).to(u.Msun)
+    co = coord.Galactocentric(x=(x1*u.m).to(u.kpc), y=(x2*u.m).to(u.kpc), z=(x3*u.m).to(u.kpc), v_x=(v1*u.m/u.s).to(u.km/u.s), v_y=(v2*u.m/u.s).to(u.km/u.s), v_z=(v3*u.m/u.s).to(u.km/u.s))
     
     if graph:
         # setup plotting
@@ -1604,56 +1636,69 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
             elz_ylim = [-0.18, -0.04]
             rvr_xlim = [1,100]
             rvr_ylim = [-400,400]
+            ind_model = (outdict['lz']<0) & (np.abs(outdict['cg'].z)>2*u.kpc) & (outdict['cg'].spherical.distance<20*u.kpc) & (outdict['cg'].spherical.distance>5*u.kpc)
+    
         elif 'disk' in mw_label:
             elz_xlim = [-6,2]
             elz_ylim = [-0.18, -0.04]
             rvr_xlim = [1,30]
             rvr_ylim = [-300,300]
+            ind_model = (np.abs(outdict['cg'].z)>2*u.kpc) & (outdict['cg'].spherical.distance<15*u.kpc) & (outdict['cg'].spherical.distance>5*u.kpc)
         else:
             elz_xlim = [-6,6]
             elz_ylim = [-0.18, -0.02]
             rvr_xlim = [1,100]
             rvr_ylim = [-400,400]
+            ind_model = np.ones(len(outdict['lz']), dtype=bool)
         
         # plot phase-space diagnostics
         plt.close()
-        fig, ax = plt.subplots(2,2,figsize=(11,12), sharex='row', sharey='row')
+        fig, ax = plt.subplots(1,4,figsize=(18,4.5))
         
         # E-Lz
-        plt.sca(ax[0,0])
-        plt.plot(lz, etot, 'ko', ms=1, mew=0, alpha=0.1)
-        plt.xlim(elz_xlim)
-        plt.ylim(elz_ylim)
-        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
-        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.sca(ax[0])
+        zoff = 10*u.kpc
+        plt.plot(cg.x, cg.z + zoff, 'o', color='0.5', ms=0.5, mew=0, alpha=0.1)
+        plt.plot(cg_.x, cg_.z - zoff, 'ko', ms=0.5, mew=0, alpha=0.1)
+        plt.xlim(-22,22)
+        plt.ylim(-22,22)
+        plt.gca().set_aspect('equal', adjustable='datalim')
+        plt.xlabel('x [kpc]')
+        plt.ylabel('z [kpc]')
         
-        plt.sca(ax[0,1])
-        plt.plot(lz_, etot_, 'ko', ms=1, mew=0, alpha=0.1)
+        plt.sca(ax[1])
+        plt.plot(t.to(u.Gyr), co.spherical.distance, 'k-')
+        plt.xlabel('Time [Gyr]')
+        plt.ylabel('r$_{gal}$ [kpc]')
+        plt.text(0.9, 0.9, '{:.3g}'.format(np.max(mass)), transform=plt.gca().transAxes, va='top', ha='right', fontsize='small')
+        
+        plt.sca(ax[2])
+        plt.plot(lz_, etot_, 'b.', ms=0.1, mew=0, alpha=0.01)
+        plt.plot(lz_[ind_model], etot_[ind_model], 'ko', ms=1, mew=0, alpha=0.1)
         eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
         for k, e in enumerate(eridge):
             plt.axhline(e, lw=0.5, alpha=0.5)
-        #plt.xlim(-6,6)
-        #plt.ylim(-0.18, -0.02)
+        plt.xlim(-6,6)
+        plt.ylim(-0.18, -0.02)
         plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
-        #plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
         
-        # r-Vr
-        plt.sca(ax[1,0])
-        plt.plot(cg.spherical.distance, cg.spherical.differentials['s'].d_distance, 'ko', ms=1, mew=0, alpha=0.1)
-        plt.xlim(rvr_xlim)
-        plt.ylim(rvr_ylim)
-        plt.ylabel('$V_r$ [km s$^{-1}$]')
-        plt.xlabel('r [kpc]')
+        plt.sca(ax[3])
+        ebins = np.linspace(-0.18,-0.07,100)
+        plt.hist(etot_[ind_model], bins=ebins, color='k', density=True, histtype='step')
+        plt.hist(etot[ind_model], bins=ebins, color='k', density=True, histtype='step', alpha=0.2)
+        for k, e in enumerate(eridge):
+            plt.axvline(e, lw=0.5, alpha=0.5)
         
-        plt.sca(ax[1,1])
-        plt.plot(cg_.spherical.distance, cg_.spherical.differentials['s'].d_distance, 'ko', ms=1, mew=0, alpha=0.1)
-        #plt.xlim(1,100)
-        #plt.ylim(-400,400)
-        #plt.ylabel('$V_r$ [km s$^{-1}$]')
-        plt.xlabel('r [kpc]')
+        plt.xlim(-0.16, -0.09)
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
         
         plt.tight_layout()
         plt.savefig('../plots/phasespace_{:s}.png'.format(root))
+
+
+# mass-loss
 
 def massloss_history():
     """"""
@@ -1661,6 +1706,7 @@ def massloss_history():
     h = 0.7
     om = 0.3
     rvir = 163*h**-1 * om**(-1/3)
+    print(rvir)
     
     N = 100
     x = np.zeros(N)*u.kpc
@@ -1760,23 +1806,97 @@ def sgr_minit(d=27*u.kpc):
 
     plt.tight_layout()
 
+def sgr_orbit(d=27*u.kpc, mi=1.4e10*u.Msun, f=5e-2, rs=1*u.kpc):
+    """"""
+    c_sgr = coord.ICRS(ra=283.76*u.deg, dec=-30.48*u.deg, distance=d, radial_velocity=142*u.km/u.s, pm_ra_cosdec=-2.7*u.mas/u.yr, pm_dec=-1.35*u.mas/u.yr)
+    cg_sgr = c_sgr.transform_to(coord.Galactocentric())
+    w0 = gd.PhaseSpacePosition(c_sgr.transform_to(gc_frame).cartesian)
+    
+    xp = np.array([cg_sgr.x.to(u.kpc).value, cg_sgr.y.to(u.kpc).value, cg_sgr.z.to(u.kpc).value]) * u.kpc
+    vp = np.array([cg_sgr.v_x.to(u.km/u.s).value, cg_sgr.v_y.to(u.km/u.s).value, cg_sgr.v_z.to(u.km/u.s).value]) * u.km/u.s
+    
+    # potential
+    #MilkyWayPotential2022
+    Mh = 554271110519.767*u.Msun
+    Rh = 15.625903558190732*u.kpc
+    Vh = np.sqrt(G*Mh/Rh).to(u.km/u.s)
+    par_gal = [5e9*u.Msun, 1*u.kpc, 47716664286.85036*u.Msun, 3*u.kpc, 0.26*u.kpc, Vh, Rh, 0*u.rad, 1*u.Unit(1), 1*u.Unit(1), 1*u.Unit(1)]
+    
+    potential = 6
+    par_pot = np.array([x_.si.value for x_ in par_gal])
+    #print(ham.potential.parameters)
+    
+    # orbit integration times
+    dt = 0.5*u.Myr
+    T = 7*u.Gyr
+    direction = int(-1)
+    t = np.arange(0, direction*(T+dt).to(u.Myr).value, direction*dt.to(u.Myr).value)
+    
+    # Sgr structural properties
+    #mi = 1e9*u.Msun
+    #rs = 1*u.kpc
+    #f = 5e-2
+    #f = 5e-1
+    #f = 5e-3
+    
+    x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, mi.to(u.kg).value, rs.to(u.m).value, f)
+    mass = (mass*u.kg).to(u.Msun)
+    
+    print('{:g}'.format(np.max(mass)))
+    
+    co = coord.Galactocentric(x=(x1*u.m).to(u.kpc), y=(x2*u.m).to(u.kpc), z=(x3*u.m).to(u.kpc), v_x=(v1*u.m/u.s).to(u.km/u.s), v_y=(v2*u.m/u.s).to(u.km/u.s), v_z=(v3*u.m/u.s).to(u.km/u.s))
+    
+    rgal = co.spherical.distance
+    ind_apo, _ = find_peaks(rgal)
+    ind_peri, _ = find_peaks(-rgal)
+    
+    if np.size(ind_apo)>=4:
+        Nstart = ind_apo[3]
+    else:
+        Nstart = np.argmin(np.abs(rgal - 300*u.kpc))
+    
+    plt.close()
+    fig, ax = plt.subplots(1,3,figsize=(15,5))
+    
+    plt.sca(ax[0])
+    plt.plot(co.x, co.z, 'k-')
+    plt.gca().set_aspect('equal', adjustable='datalim')
+    
+    plt.sca(ax[1])
+    plt.plot(t, rgal, 'k-')
+    plt.plot(t[ind_apo], rgal[ind_apo], 'bo')
+    plt.plot(t[ind_peri], rgal[ind_peri], 'ro')
+    plt.axvline(t[Nstart])
+    
+    plt.sca(ax[2])
+    plt.plot(t, mass.to(u.Msun), 'k-')
+    plt.gca().set_yscale('log')
+
+    plt.tight_layout()
+
 
 def batch_interact():
     """Run the C interaction code for a grid of input parameters"""
     
-    d = np.linspace(26.6,28.6,11) * u.kpc
-    fm = np.linspace(10,20,11)
+    #d = np.linspace(26.6,28.6,11) * u.kpc
+    #fm = np.linspace(10,20,11)
     
-    fm = np.logspace(0,3,7)
-    print(fm)
-    d = np.linspace(26,29,7) * u.kpc
-    print(d)
+    #fm = np.logspace(0,3,7)
+    #print(fm)
+    #d = np.linspace(26,29,7) * u.kpc
+    #print(d)
+    d = np.arange(27,28.1,0.5) * u.kpc
+    fm = np.arange(0,1.1,0.1)
     
-def br():
+    d = np.array([26.5])*u.kpc
+    fm = np.arange(0.5,1.01,0.05)
+    
+    print(np.size(d), np.size(fm), np.size(d)*np.size(fm)*3/60)
+    
     for d_ in d:
         for fm_ in fm:
             print(d_, fm_)
-            interact_sgr_stars(mw_label='ndisk', Nrand=50000, m=2e10*u.Msun, d=d_, fm=fm_, graph=False, verbose=True)
+            interact_sgr_stars(mw_label='ndisk', Nrand=100000, m=5e8*u.Msun, a=0.1*u.kpc, fa=50, d=d_, fm=fm_, graph=True, verbose=True)
 
 
 #from colorio.cs import ColorCoordinates

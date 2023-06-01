@@ -19,6 +19,7 @@
 
 \renewcommand{\floatpagefraction}{.9}
 
+\newcommand{\msun}{\ensuremath{\textrm{M}_\odot}}
 \newcommand{\gyr}{\ensuremath{\textrm{Gyr}}}
 \newcommand{\kpc}{\ensuremath{\textrm{kpc}}}
 \newcommand{\mas}{\ensuremath{\textrm{mas}}}
@@ -134,14 +135,21 @@ A galactic bar is extremely effective in trapping stars orbiting in resonance cl
 % - smaller accretion events present, not obvious as overdensities\cite{naidu:2020}
 % - test through chemistry -- largely the same
 
-Sagittarius is the only prominent merger the Milky Way experienced after the formation of the thick disk and the GSE merger\cite{ruiz-lara:2020, kruijssen:2020, bonaca:2020}.
-- details of the simulation: realistic thick disk + GSE
-- best fit model: Sgr evolved w dynamical friction + mass-loss
-- quantify agreement
+Sagittarius is the only prominent merger the Milky Way experienced after the formation of the thick disk and the GSE merger and could affect both components\cite{ruiz-lara:2020, kruijssen:2020, bonaca:2020}.
+We ran idealized N-body experiments to explore whether a Sagittarius-like merger can form the observed phase-space ripples in the Milky Way.
+The merging satellite was initialized at the present-day position of Sagittarius\cite{vasiliev:2021} as a Hernquist sphere\cite{hernquist:1990} with a mass of $1\times10^{10}\,\msun$, comparable to the massive Sagittarius models\cite{laporte:2018}.
+Our Milky Way model has two components: (i) 100,000 disk particles, initialized to form a self-consistent thick disk, with properties typical of a $z=2$ disk, and the velocity scale adjusted to match the Milky Way today, and (ii) 50,000 halo particles, initialized as the final N-body snapshot of a GSE-like debris\cite{naidu:2021}.
+Sagittarius and all of the Milky Way particles were evolved for 6\,Gyr in a three-component, static background potential\cite{gala:2022}.
 
-- describe fig 2: peaks measure the total orbital history
-- what do peaks correspond to in relation to Sgr orbit?
-- examples of no mass-loss, best-fit, too much
+- what's happening
+- looks like 
+- sensitive to orbital history
+- needs dynamical friction + mass-loss to reproduce energy spacing
+- quantification: x/xx most-prominent peaks matched?
+
+% - describe fig 2: peaks measure the total orbital history
+% - what do peaks correspond to in relation to Sgr orbit?
+% - examples of no mass-loss, best-fit, too much
 
 - exciting that we are sensitive to mass-loss: depends directly on the mass profile of the dwarf
 - encodes dm physics, but long-standing question, hard to observe directly
