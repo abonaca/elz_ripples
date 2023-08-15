@@ -327,7 +327,8 @@ def elz_ehist(snr=3):
     w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
     
     orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
-    etot = orbit.energy()[0].reshape(N,-1)
+    #etot = orbit.energy()[0].reshape(N,-1)
+    etot = orbit.energy()[0]
     
     # load ELz samples
     pkl = pickle.load(open('../data/elz_samples.{:d}.pkl'.format(snr), 'rb'))
@@ -360,6 +361,29 @@ def elz_ehist(snr=3):
     #ind = [ind_1, ind_2, ind_3, ind_4]
     #color = [mpl.cm.plasma(x) for x in [0.8, 0.6, 0.4, 0.2]]
     
+    #ind_disk = (t['circLz_pot1']>0.5) & (t['Lz']<0)
+    ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err'])) & ind_disk
+    
+    sigma_etot = (np.nanmedian(t['E_tot_pot1_err'][ind_finite])*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value
+    sigma_lz = (np.nanmedian(t['Lz_err'][ind_finite])*u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1).value
+    
+    #2D histogram
+    Nbin = 1000
+    be_lz = np.linspace(-6, 6, Nbin)
+    be_etot = np.linspace(-0.18, -0.02, Nbin)
+    
+    h, xe, ye = np.histogram2d(t['Lz'], etot, bins=(be_lz, be_etot))
+    h += 0.1
+    
+    detot = be_etot[1] - be_etot[0]
+    dlz = be_lz[1] - be_lz[0]
+    sigma_smooth = np.array([sigma_etot/detot, sigma_lz/dlz]) * 1
+    
+    h_smooth = ndimage.gaussian_filter(h, sigma_smooth)
+    
+    beta = 0.35
+    h_smooth_norm = np.arcsinh(h_smooth/beta)
+    
     
     # Plotting
     
@@ -388,7 +412,7 @@ def elz_ehist(snr=3):
     #plt.scatter(t['Lz'], etot, c=t['SNR'], cmap='binary', ec='none', s=3, vmin=2, vmax=7, alpha=0.3)
     #plt.scatter(t['Lz'], etot, c=t['SNR'], cmap='binary', ec='none', s=3, vmin=2, vmax=7, alpha=0.3)
     #plt.plot(t['Lz'], etot, 'ko', ms=1.5, mew=0, alpha=0.3)
-    plt.plot(t['Lz'], etot, 'ko', ms=3.5, mew=0, alpha=0.3)
+    #plt.plot(t['Lz'], etot, 'ko', ms=3.5, mew=0, alpha=0.3)
     #plt.plot(pkl['lz'], pkl['etot'], 'ko', ms=1, mew=0, alpha=0.005, rasterized=True)
     
     #alpha = 0.2
@@ -398,10 +422,12 @@ def elz_ehist(snr=3):
     #plt.axvline(-0.2, color='r', ls=':', alpha=alpha)
     #plt.axvline(-0.5, color='r', ls=':', alpha=alpha)
     
+    plt.imshow(h_smooth_norm.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary', vmax=0.9)
+    
     plt.xlim(-6,6)
     plt.ylim(-0.18, -0.02)
-    plt.xlim(-3.5,1.5)
-    plt.ylim(-0.18, -0.10)
+    #plt.xlim(-3.5,1.5)
+    #plt.ylim(-0.18, -0.10)
     
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
     plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
@@ -431,8 +457,7 @@ def elz_ehist(snr=3):
     for i in range(2):
         plt.sca(ax[i+1])
     
-        n, b, bars = plt.hist(etot[ind[i]].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.2, lw=1.5, label=labels[i])
-        #n, b, bars = plt.hist(pkl['etot'][ind[i] & (t['SNR']>10*(1+i))].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.2, lw=1.5, label=labels[i])
+        n, b, bars = plt.hist(etot[ind[i]].ravel().value, bins=ebins, density=True, histtype='step', color=color[i], alpha=0.2, lw=1.5)
         
         vert = bars[0].get_xy()
         Nb = np.size(b)
@@ -440,7 +465,8 @@ def elz_ehist(snr=3):
         w = b[1] - b[0]
         y = vert[:,1][:2*Nb][1::2][:-1]
         
-        grad = np.atleast_2d(np.linspace(0,1,256)**0.6).T
+        grad = np.atleast_2d(np.linspace(0,1,256)**0.55).T
+        
         lim = plt.gca().get_xlim() + plt.gca().get_ylim()
         for j in range(Nb-1):
             plt.imshow(grad, extent=[x[j],x[j]+w,0,y[j]], aspect='auto', zorder=0, cmap=cmap[i])
@@ -448,15 +474,12 @@ def elz_ehist(snr=3):
         
         plt.xlim(-0.16, -0.08)
         plt.ylabel('Density')
-        plt.legend(fontsize='small', frameon=False, handlelength=0.5, loc=1)
+        plt.text(0.97,0.9, labels[i], fontsize='small', transform=plt.gca().transAxes, ha='right', va='top')
 
         if i<1:
             plt.gca().set_xticklabels([])
     
     plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
-    
-    
-
     
     # show gaps
     egap = [-0.16397, -0.15766, -0.15249, -0.14117, -0.12969, -0.12403, -0.11891, -0.10511, -0.09767]
@@ -465,7 +488,7 @@ def elz_ehist(snr=3):
     for e in eridge:
         plt.sca(ax[0])
         plt.arrow(poly(e)-0.9, e, 0.5, 0., color=color[0], alpha=0.5, head_length=0.2)
-        plt.arrow(1.5, e, -0.5, 0., color=color[1], alpha=0.5, head_length=0.2, zorder=1)
+        plt.arrow(1, e, -0.5, 0., color=color[1], alpha=0.5, head_length=0.2, zorder=1)
         for i in range(2):
             plt.sca(ax[i+1])
             plt.axvline(e, color='k', ls=':', lw=1.5)

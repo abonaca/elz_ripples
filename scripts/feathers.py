@@ -419,7 +419,6 @@ def period_spectrum(snr=3, log=False, res_label='sgr'):
     
     # Sgr
     d = np.array([26,26.5,27])*u.kpc
-    d = np.array([26,26.5,27])*u.kpc
     dt = 1*u.Myr
     T = 5*u.Gyr
     Nstep = int((T/dt).decompose())
@@ -985,17 +984,20 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     etot = orbit.energy()[0]
     
     # weights
-    ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err']))
+    ind_disk = (t['circLz_pot1']>0.5) & (t['Lz']<0)
+    ind_finite = (np.isfinite(t['E_tot_pot1_err'])) & (np.isfinite(t['Lz_err'])) & ind_disk
+    
     sigma_etot = (np.nanmedian(t['E_tot_pot1_err'][ind_finite])*u.km**2*u.s**-2).to(u.kpc**2*u.Myr**-2).value
     sigma_lz = (np.nanmedian(t['Lz_err'][ind_finite])*u.kpc*u.km/u.s).to(u.kpc**2*u.Myr**-1).value
     
     if weight:
         w = ((t['E_tot_pot1_err']/sigma_etot)**2 + (t['Lz_err']/sigma_lz)**2)**-0.5
+        w = w/np.max(w)
     else:
         w = np.ones(N)
     
     #2D histogram
-    Nbin = 500
+    Nbin = 1000
     be_lz = np.linspace(-6, 6, Nbin)
     be_etot = np.linspace(-0.18, -0.02, Nbin)
     
@@ -1004,10 +1006,16 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     
     detot = be_etot[1] - be_etot[0]
     dlz = be_lz[1] - be_lz[0]
-    sigma_smooth = np.array([sigma_etot/detot, sigma_lz/dlz]) * 0.3
-    print(sigma_smooth)
+    sigma_smooth = np.array([sigma_etot/detot, sigma_lz/dlz]) * 1
+    #print(sigma_smooth)
     
     h_smooth = ndimage.gaussian_filter(h, sigma_smooth)
+    print(np.min(h_smooth), np.max(h_smooth))
+    
+    beta = 0.35
+    h_smooth_norm = np.arcsinh(h_smooth/beta)
+    print(np.min(h_smooth_norm), np.max(h_smooth_norm))
+    #h_smooth_norm = h_smooth/h_smooth.max(axis=1, keepdims=True)
     
     h_sx = ndimage.sobel(h_smooth, axis=0, mode='constant')
     h_sy = ndimage.sobel(h_smooth, axis=1, mode='constant')
@@ -1029,7 +1037,7 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     fig, ax = plt.subplots(1,4,figsize=(16,4.6), sharex=True, sharey=True)
     
     plt.sca(ax[0])
-    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(vmax=vmax), interpolation='none', cmap='binary')
+    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none', cmap='binary')
     #plt.imshow(h.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', norm=mpl.colors.LogNorm(), interpolation='none')
     
     plt.xlim(-6,6)
@@ -1040,11 +1048,16 @@ def elz_hist(snr=3, tracer='giants', weight=False):
     plt.title('Smooth, lognorm', fontsize='small')
     
     plt.sca(ax[1])
-    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary', vmax=vmax)
+    plt.imshow(h_smooth.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary')
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
     plt.title('Smooth, linear', fontsize='small')
 
     plt.sca(ax[2])
+    plt.imshow(h_smooth_norm.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='binary', vmax=0.9)
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.title('Smooth, normalized', fontsize='small')
+    
+    plt.sca(ax[3])
     plt.imshow(h_circ.T, origin='lower', extent=(-6,6,-0.18,-0.02), aspect='auto', interpolation='none', cmap='RdBu', vmin=-1, vmax=1)
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
     plt.title('circularity', fontsize='small')
@@ -1124,6 +1137,36 @@ def elz_unsharp(tracer='giants', snr=3):
     
     plt.tight_layout()
     plt.savefig('../plots/elz_unsharp_{:s}.png'.format(tracer))
+
+def elz_scatter(snr=3):
+    """"""
+    t = Table.read('../data/rcat_giants.fits')
+    ind = (t['SNR']>snr) #& (t['L']>90) & (t['L']<270)
+    #ind = (t['SNR']>snr) & (np.abs(t['B'])>35)#& ((t['L']<90) | (t['L']>270))
+    t = t[ind]
+    
+    c = coord.SkyCoord(ra=t['RA']*u.deg, dec=t['DEC']*u.deg, distance=t['dist_adpt']*u.kpc, pm_ra_cosdec=t['GAIAEDR3_PMRA']*u.mas/u.yr, pm_dec=t['GAIAEDR3_PMDEC']*u.mas/u.yr, radial_velocity=t['Vrad']*u.km/u.s, frame='icrs')
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=0)
+    etot = orbit.energy()[0].reshape(len(t),-1)
+    
+    #ind_anti = (t['L']>90) & (t['L']<270)
+    
+    plt.close()
+    plt.figure(figsize=(8,8))
+    
+    #plt.plot(t['Lz'], etot, 'ko', ms=2, mew=0, alpha=0.3)
+    plt.scatter(t['Lz'], etot, c='k', ec='none', s=t['SNR']*0.2, alpha=0.5)
+    
+    plt.xlim(-6,6)
+    plt.ylim(-0.18, -0.02)
+    
+    plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout()
+    
 
 
 def elz_xd(tracer='giants', snr=3, n_clusters=6):
@@ -2322,7 +2365,7 @@ def elz_afeh():
     
     plt.sca(ax[0])
     #plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
-    plt.plot(t['Lz'][ind_higha], t['E_tot_pot1'][ind_higha], 'ko', ms=2, mew=0)
+    plt.plot(t['Lz'][ind_higha], t['E_tot_pot1'][ind_higha], 'ko', ms=1.5, mew=0)
     #plt.scatter(t['Lz'][ind_higha], t['E_tot_pot1'][ind_higha], c=t['FeH'][ind_higha], cmap='magma', s=3, vmin=-0.75, vmax=0)
     
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
@@ -2331,7 +2374,7 @@ def elz_afeh():
     
     plt.sca(ax[1])
     #plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
-    plt.plot(t['Lz'][ind_lowa], t['E_tot_pot1'][ind_lowa], 'ko', ms=2, mew=0)
+    plt.plot(t['Lz'][ind_lowa], t['E_tot_pot1'][ind_lowa], 'ko', ms=1.5, mew=0)
     #plt.scatter(t['Lz'][ind_lowa], t['E_tot_pot1'][ind_lowa], c=t['FeH'][ind_lowa], cmap='magma', s=3, vmin=-0.75, vmax=0)
     
     plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
@@ -2339,7 +2382,7 @@ def elz_afeh():
     
     plt.sca(ax[2])
     #plt.plot(t['Lz'], t['E_tot_pot1'], 'ko', ms=2, mew=0, alpha=0.3)
-    plt.plot(t['Lz'][ind_gse], t['E_tot_pot1'][ind_gse], 'ko', ms=2, mew=0, alpha=0.7)
+    plt.plot(t['Lz'][ind_gse], t['E_tot_pot1'][ind_gse], 'ko', ms=1.5, mew=0, alpha=0.7)
     #plt.scatter(t['Lz'][ind_lowa], t['E_tot_pot1'][ind_lowa], c=t['FeH'][ind_lowa], cmap='magma', s=3, vmin=-0.75, vmax=0)
     
     plt.xlim(-4, 4)

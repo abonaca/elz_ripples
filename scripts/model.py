@@ -29,6 +29,8 @@ from scipy.optimize import minimize
 from scipy import ndimage
 from scipy.signal import find_peaks
 
+from functools import partial
+
 import pickle
 import h5py
 
@@ -1566,7 +1568,9 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
     
     potential = 6
     par_pot = np.array([x_.si.value for x_ in par_gal])
-    #print(ham.potential.parameters)
+    
+    # leapfrog integrator
+    integrator = 0
     
     # trial orbit to find total simulation time (4 pericenters or 300kpc)
     # orbit integration times
@@ -1575,8 +1579,11 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
     direction = int(-1)
     t = np.arange(0, direction*(T+dt).to(u.Myr).value, direction*dt.to(u.Myr).value)*u.Myr
     
-    x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, m.to(u.kg).value, a.to(u.m).value, fm)
-    mass = mass*u.kg
+    if df:
+        x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, m.to(u.kg).value, a.to(u.m).value, fm)
+        mass = mass*u.kg
+    else:
+        x1, x2, x3, v1, v2, v3 = interact.orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, integrator, T.to(u.s).value, dt.to(u.s).value, direction)
     
     co = coord.Galactocentric(x=(x1*u.m).to(u.kpc), y=(x2*u.m).to(u.kpc), z=(x3*u.m).to(u.kpc), v_x=(v1*u.m/u.s).to(u.km/u.s), v_y=(v2*u.m/u.s).to(u.km/u.s), v_z=(v3*u.m/u.s).to(u.km/u.s))
     
@@ -1586,20 +1593,26 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
     
     if np.size(ind_apo)>=4:
         Nstart = ind_apo[3]
+        Nstart = ind_apo[Napo]
     else:
         Nstart = np.argmin(np.abs(rgal - 300*u.kpc))
     
     # simulation time
     dt = 0.5*u.Myr
     T = np.abs(t[Nstart])
+    #T = 510*u.Myr
     print(T)
+    
+    root = 'interact{:d}_d.{:.1f}_m.{:.2f}.{:.2f}_a.{:02.1f}.{:.1f}_{:s}_N.{:06d}'.format(df, d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
+    fname = '../data/snaps_{:s}.h5'.format(root)
+    Nskip = 200
     
     t1 = time.time()
     if df:
-        x1, x2, x3, v1, v2, v3 = interact.df_interact(par_perturb, m.si.value, fm, fa*a.si.value, xp.to(u.m).value, vp.to(u.m/u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
+        x1, x2, x3, v1, v2, v3 = interact.df_interact(par_perturb, m.si.value, fm, fa*a.si.value, xp.to(u.m).value, vp.to(u.m/u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value, fname, Nskip)
     else:
         Tenc = 0*u.Gyr
-        x1, x2, x3, v1, v2, v3 = interact.general_interact(par_perturb, xp.to(u.m).value, vp.to(u.m/u.s).value, Tenc.to(u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value)
+        x1, x2, x3, v1, v2, v3 = interact.general_interact(par_perturb, xp.to(u.m).value, vp.to(u.m/u.s).value, Tenc.to(u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value, fname, Nskip)
     t2 = time.time()
     
     if verbose:
@@ -1617,17 +1630,24 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
     
     # save
     outdict = dict(cg=cg_, etot=etot_, lz=lz_)
-    root = 'interact{:d}_d.{:.1f}_m.{:.2f}.{:.2f}_a.{:02.1f}.{:.1f}_{:s}_N.{:06d}'.format(df, d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
+    #root = 'interact{:d}_d.{:.1f}_m.{:.2f}.{:.2f}_a.{:02.1f}.{:.1f}_{:s}_N.{:06d}'.format(df, d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
     pickle.dump(outdict, open('../data/models/model_{:s}.pkl'.format(root), 'wb'))
     
     # Sgr orbit
     direction = int(-1)
     t = np.arange(0, direction*(T+dt).to(u.Myr).value, direction*dt.to(u.Myr).value)*u.Myr
 
-    x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, m.to(u.kg).value, a.to(u.m).value, fm)
+    if df:
+        x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, m.to(u.kg).value, a.to(u.m).value, fm)
+        mass = (mass*u.kg).to(u.Msun)
+    else:
+        x1, x2, x3, v1, v2, v3 = interact.orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, integrator, T.to(u.s).value, dt.to(u.s).value, direction)
+        mass = m
     
-    mass = (mass*u.kg).to(u.Msun)
     co = coord.Galactocentric(x=(x1*u.m).to(u.kpc), y=(x2*u.m).to(u.kpc), z=(x3*u.m).to(u.kpc), v_x=(v1*u.m/u.s).to(u.km/u.s), v_y=(v2*u.m/u.s).to(u.km/u.s), v_z=(v3*u.m/u.s).to(u.km/u.s))
+    
+    sgr_orbit = dict(c=co, t=t, m=m)
+    pickle.dump(sgr_orbit, open('../data/sgr_orbit_{:s}.pkl'.format(root), 'wb'))
     
     if graph:
         # setup plotting
@@ -1696,6 +1716,241 @@ def interact_sgr_stars(d=27*u.kpc, m=1.4e10*u.Msun, fm=16, a=1*u.kpc, fa=5, Napo
         
         plt.tight_layout()
         plt.savefig('../plots/phasespace_{:s}.png'.format(root))
+
+
+def interact_lmc_stars(d=27*u.kpc, m=2.5e11*u.Msun, fm=16, a=5*u.kpc, fa=5, Napo=5, mw_label='halo', Nrand=50000, seed=3928, Nskip=1, iskip=0, snap_skip=100, df=True, test=False, graph=True, verbose=True):
+    """
+    Initialize at apocenter
+    d - Sgr heliocentric distance (default 27 kpc, reasonable range: 24-28 kpc, Vasiliev)
+    m - Sgr Hernquist mass (default 1.4e10 Msun - H2, H1: 0.8e10 Msun, Laporte)
+    a - Sgr Hernquist scale radius (default 7 kpc - H2, alternatives H2 13kpc, H1 8,16kpc, Laporte)
+    """
+    
+    # initialize Sgr location
+    dg = 'lmc'
+    c_dg = coord.ICRS(ra=78.76*u.deg, dec=-69.19*u.deg, distance=10**(0.2*18.50+1)*u.pc, radial_velocity=262.2*u.km/u.s, pm_ra_cosdec=1.91*u.mas/u.yr, pm_dec=0.229*u.mas/u.yr)
+    #c_sgr = coord.ICRS(ra=283.76*u.deg, dec=-30.48*u.deg, distance=d, radial_velocity=142*u.km/u.s, pm_ra_cosdec=-2.7*u.mas/u.yr, pm_dec=-1.35*u.mas/u.yr)
+    cg_dg = c_dg.transform_to(coord.Galactocentric())
+    xp = np.array([cg_dg.x.to(u.kpc).value, cg_dg.y.to(u.kpc).value, cg_dg.z.to(u.kpc).value]) * u.kpc
+    vp = np.array([cg_dg.v_x.to(u.km/u.s).value, cg_dg.v_y.to(u.km/u.s).value, cg_dg.v_z.to(u.km/u.s).value]) * u.km/u.s
+
+    # Hernquist profile
+    potential_perturb = 2
+    par_perturb = np.array([m.si.value, a.si.value, 0., 0., 0.])
+    
+    #w1_sgr = gd.PhaseSpacePosition(c_sgr.transform_to(gc_frame).cartesian)
+    
+    ## find initial Sgr position
+    #dt = 0.5*u.Myr
+    #Tback = 10*u.Gyr
+    #Nback = int((Tback/dt).decompose())
+    #Napo = 5
+    
+    #sgr_orbit_back = ham.integrate_orbit(w1_sgr, dt=-dt, n_steps=Nback)
+    
+    ## extract position at a given apocenter
+    #apo, tapo = sgr_orbit_back.apocenter(func=None, return_times=True)
+    #ind_apo = np.argmin(np.abs(sgr_orbit_back.t - tapo[-Napo]))
+    #w0_sgr = sgr_orbit_back[ind_apo]
+    ##print("density", ham.potential['halo'].density(w1_sgr).si)
+    
+    ## calculate number of time steps to integrate forward
+    #ind = np.arange(Nback+1, dtype=int)
+    #Nfwd = ind[ind_apo]
+    ##print(tapo[-Napo], Nfwd)
+
+    # initialize star particles
+    if mw_label=='halo':
+        c = initialize_halo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='idisk':
+        c = initialize_idisk(ret=True, Ntot=Nrand, Nr=1000, seed=seed)[iskip::Nskip]
+    elif mw_label=='ndisk':
+        c = initialize_ndisk(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='nhalo':
+        c = initialize_nhalo(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    elif mw_label=='adisk':
+        c = initialize_adisk(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    else:
+        mw_label = 'td'
+        c = initialize_td(ret=True, Nrand=Nrand, seed=seed)[iskip::Nskip]
+    
+    cg = c.transform_to(coord.Galactocentric())
+    w0 = gd.PhaseSpacePosition(c.transform_to(gc_frame).cartesian)
+    orbit = ham.integrate_orbit(w0, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit.energy()[0].value
+    lz = orbit.angular_momentum()[2][0]
+    
+    if test:
+        print(xp, vp)
+        print(np.size(cg.x))
+        return 0
+    
+    
+    ##MilkyWayPotential
+    #Mh = 5.4e11*u.Msun
+    #Rh = 15.62*u.kpc
+    #Vh = np.sqrt(G*Mh/Rh).to(u.km/u.s)
+    #par_gal = [5e9*u.Msun, 1*u.kpc, 6.8e10*u.Msun, 3*u.kpc, 0.28*u.kpc, Vh, Rh, 0*u.rad, 1*u.Unit(1), 1*u.Unit(1), 1*u.Unit(1)]
+    
+    #MilkyWayPotential2022
+    Mh = 554271110519.767*u.Msun
+    Rh = 15.625903558190732*u.kpc
+    Vh = np.sqrt(G*Mh/Rh).to(u.km/u.s)
+    par_gal = [5e9*u.Msun, 1*u.kpc, 47716664286.85036*u.Msun, 3*u.kpc, 0.26*u.kpc, Vh, Rh, 0*u.rad, 1*u.Unit(1), 1*u.Unit(1), 1*u.Unit(1)]
+    
+    potential = 6
+    par_pot = np.array([x_.si.value for x_ in par_gal])
+    
+    # leapfrog integrator
+    integrator = 0
+    
+    # trial orbit to find total simulation time (4 pericenters or 300kpc)
+    # orbit integration times
+    dt = 0.5*u.Myr
+    T = 8*u.Gyr
+    direction = int(-1)
+    t = np.arange(0, direction*(T+dt).to(u.Myr).value, direction*dt.to(u.Myr).value)*u.Myr
+    
+    if df:
+        x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, m.to(u.kg).value, a.to(u.m).value, fm)
+        mass = mass*u.kg
+    else:
+        x1, x2, x3, v1, v2, v3 = interact.orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, integrator, T.to(u.s).value, dt.to(u.s).value, direction)
+    
+    co = coord.Galactocentric(x=(x1*u.m).to(u.kpc), y=(x2*u.m).to(u.kpc), z=(x3*u.m).to(u.kpc), v_x=(v1*u.m/u.s).to(u.km/u.s), v_y=(v2*u.m/u.s).to(u.km/u.s), v_z=(v3*u.m/u.s).to(u.km/u.s))
+    
+    rgal = co.spherical.distance
+    ind_apo, _ = find_peaks(rgal)
+    ind_peri, _ = find_peaks(-rgal)
+    
+    if dg=='lmc':
+        Nstart = np.argmin(np.abs(rgal - 300*u.kpc))
+    else:
+        if np.size(ind_apo)>=4:
+            Nstart = ind_apo[3]
+        else:
+            Nstart = np.argmin(np.abs(rgal - 300*u.kpc))
+    
+    # simulation time
+    dt = 0.5*u.Myr
+    T = np.abs(t[Nstart])
+    #T = 510*u.Myr
+    print(T)
+    
+    root = 'interact{:d}_{:s}_d.{:.1f}_m.{:.2f}.{:.2f}_a.{:02.1f}.{:.1f}_{:s}_N.{:06d}'.format(df, dg, d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
+    fname = '../data/snaps_{:s}.h5'.format(root)
+    Nskip = 200
+    
+    t1 = time.time()
+    if df:
+        x1, x2, x3, v1, v2, v3 = interact.df_interact(par_perturb, m.si.value, fm, fa*a.si.value, xp.to(u.m).value, vp.to(u.m/u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value, fname, Nskip)
+    else:
+        Tenc = 0*u.Gyr
+        x1, x2, x3, v1, v2, v3 = interact.general_interact(par_perturb, xp.to(u.m).value, vp.to(u.m/u.s).value, Tenc.to(u.s).value, T.to(u.s).value, dt.to(u.s).value, par_pot, potential, potential_perturb, cg.x.to(u.m).value, cg.y.to(u.m).value, cg.z.to(u.m).value, cg.v_x.to(u.m/u.s).value, cg.v_y.to(u.m/u.s).value, cg.v_z.to(u.m/u.s).value, fname, Nskip)
+    t2 = time.time()
+    
+    if verbose:
+        print(t2 - t1)
+    
+    stars = {}
+    stars['x'] = (np.array([x1, x2, x3])*u.m).to(u.kpc)
+    stars['v'] = (np.array([v1, v2, v3])*u.m/u.s).to(u.km/u.s)
+    
+    cg_ = coord.Galactocentric(x=stars['x'][0], y=stars['x'][1], z=stars['x'][2], v_x=stars['v'][0], v_y=stars['v'][1], v_z=stars['v'][2])
+    w0_ = gd.PhaseSpacePosition(cg_.cartesian)
+    orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+    etot_ = orbit_.energy()[0].value
+    lz_ = orbit_.angular_momentum()[2][0]
+    
+    # save
+    outdict = dict(cg=cg_, etot=etot_, lz=lz_)
+    #root = 'interact{:d}_d.{:.1f}_m.{:.2f}.{:.2f}_a.{:02.1f}.{:.1f}_{:s}_N.{:06d}'.format(df, d.to(u.kpc).value, (m*1e-10).to(u.Msun).value, fm, a.to(u.kpc).value, fa, mw_label, Nrand)
+    pickle.dump(outdict, open('../data/models/model_{:s}.pkl'.format(root), 'wb'))
+    
+    # Sgr orbit
+    direction = int(-1)
+    t = np.arange(0, direction*(T+dt).to(u.Myr).value, direction*dt.to(u.Myr).value)*u.Myr
+
+    if df:
+        x1, x2, x3, v1, v2, v3, mass = interact.df_orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, T.to(u.s).value, dt.to(u.s).value, direction, m.to(u.kg).value, a.to(u.m).value, fm)
+        mass = (mass*u.kg).to(u.Msun)
+    else:
+        x1, x2, x3, v1, v2, v3 = interact.orbit(xp.to(u.m).value, vp.to(u.m/u.s).value, par_pot, potential, integrator, T.to(u.s).value, dt.to(u.s).value, direction)
+        mass = m
+    
+    co = coord.Galactocentric(x=(x1*u.m).to(u.kpc), y=(x2*u.m).to(u.kpc), z=(x3*u.m).to(u.kpc), v_x=(v1*u.m/u.s).to(u.km/u.s), v_y=(v2*u.m/u.s).to(u.km/u.s), v_z=(v3*u.m/u.s).to(u.km/u.s))
+    
+    sgr_orbit = dict(c=co, t=t, m=m)
+    pickle.dump(sgr_orbit, open('../data/sgr_orbit_{:s}.pkl'.format(root), 'wb'))
+    
+    if graph:
+        # setup plotting
+        if 'halo' in mw_label:
+            elz_xlim = [-5,5]
+            elz_ylim = [-0.18, -0.04]
+            rvr_xlim = [1,100]
+            rvr_ylim = [-400,400]
+            ind_model = (outdict['lz']<0) & (np.abs(outdict['cg'].z)>2*u.kpc) & (outdict['cg'].spherical.distance<20*u.kpc) & (outdict['cg'].spherical.distance>5*u.kpc)
+    
+        elif 'disk' in mw_label:
+            elz_xlim = [-6,2]
+            elz_ylim = [-0.18, -0.04]
+            rvr_xlim = [1,30]
+            rvr_ylim = [-300,300]
+            ind_model = (np.abs(outdict['cg'].z)>2*u.kpc) & (outdict['cg'].spherical.distance<15*u.kpc) & (outdict['cg'].spherical.distance>5*u.kpc)
+        else:
+            elz_xlim = [-6,6]
+            elz_ylim = [-0.18, -0.02]
+            rvr_xlim = [1,100]
+            rvr_ylim = [-400,400]
+            ind_model = np.ones(len(outdict['lz']), dtype=bool)
+        
+        # plot phase-space diagnostics
+        plt.close()
+        fig, ax = plt.subplots(1,4,figsize=(18,4.5))
+        
+        # E-Lz
+        plt.sca(ax[0])
+        zoff = 10*u.kpc
+        plt.plot(cg.x, cg.z + zoff, 'o', color='0.5', ms=0.5, mew=0, alpha=0.1)
+        plt.plot(cg_.x, cg_.z - zoff, 'ko', ms=0.5, mew=0, alpha=0.1)
+        plt.xlim(-22,22)
+        plt.ylim(-22,22)
+        plt.gca().set_aspect('equal', adjustable='datalim')
+        plt.xlabel('x [kpc]')
+        plt.ylabel('z [kpc]')
+        
+        plt.sca(ax[1])
+        plt.plot(t.to(u.Gyr), co.spherical.distance, 'k-')
+        plt.xlabel('Time [Gyr]')
+        plt.ylabel('r$_{gal}$ [kpc]')
+        plt.text(0.9, 0.9, '{:.3g}'.format(np.max(mass)), transform=plt.gca().transAxes, va='top', ha='right', fontsize='small')
+        
+        plt.sca(ax[2])
+        plt.plot(lz_, etot_, 'b.', ms=0.1, mew=0, alpha=0.01)
+        plt.plot(lz_[ind_model], etot_[ind_model], 'ko', ms=1, mew=0, alpha=0.1)
+        eridge = np.array([-0.146, -0.134, -0.127, -0.122, -0.116])
+        for k, e in enumerate(eridge):
+            plt.axhline(e, lw=0.5, alpha=0.5)
+        plt.xlim(-6,6)
+        plt.ylim(-0.18, -0.02)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+        plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        
+        plt.sca(ax[3])
+        ebins = np.linspace(-0.18,-0.07,100)
+        plt.hist(etot_[ind_model], bins=ebins, color='k', density=True, histtype='step')
+        plt.hist(etot[ind_model], bins=ebins, color='k', density=True, histtype='step', alpha=0.2)
+        for k, e in enumerate(eridge):
+            plt.axvline(e, lw=0.5, alpha=0.5)
+        
+        plt.xlim(-0.16, -0.09)
+        plt.xlabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+        plt.ylabel('Density [kpc$^{-2}$ Myr$^{2}$]')
+        
+        plt.tight_layout()
+        plt.savefig('../plots/phasespace_{:s}.png'.format(root))
+
 
 
 # mass-loss
@@ -2434,6 +2689,228 @@ def aux_ratios():
 
 # Evolution following the impacts
 
+def read_hdf5():
+    """"""
+    fname = '../data/snaps_interact0_d.27.0_m.1.40.16.00_a.1.0.5.0_ndisk_N.010000.h5'
+    fname = '../data/snaps_interact0_d.27.0_m.1.40.16.00_a.1.0.5.0_ndisk_N.100000.h5'
+    f = h5py.File(fname, 'r')
+    all_snaps = list(f.keys())
+    #print(len(all_snaps))
+    
+    snaps = all_snaps[::10]
+    Nsnap = len(snaps)
+    da = 3
+    
+    plt.close()
+    fig, ax = plt.subplots(1, Nsnap, figsize=(Nsnap*da*0.8, da), sharex=True, sharey=True)
+    
+    for i in range(Nsnap):
+        plt.sca(ax[i])
+        c = coord.Galactocentric(x=(f[snaps[i]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[i]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[i]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[i]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[i]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[i]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+        
+        #w0_ = gd.PhaseSpacePosition(c.cartesian)
+        #orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+        #etot = orbit_.energy()[0,:]
+        #lz = orbit_.angular_momentum()[2,0,:]
+        
+        #plt.plot(lz, etot, 'o', mew=0, ms=1, alpha=0.1)
+        
+        plt.plot(c.x, c.y, 'o', mew=0, ms=1, alpha=0.1)
+    
+        plt.xlim(-30,30)
+        plt.ylim(-30,30)
+        plt.gca().set_aspect('equal')
+        plt.xlabel('x [kpc]')
+    
+    plt.sca(ax[0])
+    plt.ylabel('y [kpc]')
+    plt.tight_layout(h_pad=0, w_pad=0)
+
+    f.close()
+
+def elz_evolution(verbose=False):
+    """Plot ELz in individual snapshots"""
+    
+    fname = '../data/snaps_interact0_d.27.0_m.1.40.16.00_a.1.0.5.0_ndisk_N.010000.h5'
+    #fname = '../data/snaps_interact0_d.27.0_m.1.40.16.00_a.1.0.5.0_ndisk_N.100000.h5'
+    fname = '../data/snaps_interact1_d.26.6_m.0.05.0.21_a.0.5.10.0_ndisk_N.100000.h5'
+    fname = '../data/snaps_interact0_d.26.6_m.1.40.16.00_a.1.0.5.0_ndisk_N.100000.h5'
+    #fname = '../data/snaps_interact1_lmc_d.27.0_m.25.00.0.00_a.5.0.1.0_ndisk_N.100000.h5'
+    #fname = '../data/snaps_interact0_lmc_d.27.0_m.25.00.1.00_a.5.0.1.0_ndisk_N.100000.h5'
+    f = h5py.File(fname, 'r')
+    snaps = list(f.keys())
+    
+    Nsnap = len(snaps)
+    Nrow = int(Nsnap // np.sqrt(Nsnap))
+    Ncol = int(np.ceil(Nsnap/Nrow))
+    
+    if verbose: print(Nsnap, Nrow, Ncol)
+    da = 3.5
+    
+    T = -6490.5*u.Myr
+    T = -2977.5*u.Myr
+    T = -1111.5*u.Myr
+    T = -3413.5*u.Myr
+    dt = 0.5*u.Myr
+    nskip = 200
+    
+    #pkl = pickle.load(open('../data/sgr_orbit_interact0_d.27.0_m.1.40.16.00_a.1.0.5.0_ndisk_N.010000.pkl', 'rb'))
+    pkl = pickle.load(open('../data/sgr_orbit_interact1_d.26.6_m.0.05.0.21_a.0.5.10.0_ndisk_N.100000.pkl', 'rb'))
+    pkl = pickle.load(open('../data/sgr_orbit_interact0_d.26.6_m.1.40.16.00_a.1.0.5.0_ndisk_N.100000.pkl', 'rb'))
+    #pkl = pickle.load(open('../data/sgr_orbit_interact1_lmc_d.27.0_m.25.00.0.00_a.5.0.1.0_ndisk_N.100000.pkl', 'rb'))
+    #pkl = pickle.load(open('../data/sgr_orbit_interact0_lmc_d.27.0_m.25.00.1.00_a.5.0.1.0_ndisk_N.100000.pkl', 'rb'))
+    
+    c = pkl['c'][::-1]
+    t = pkl['t'][::-1]
+    q = gd.PhaseSpacePosition(c.cartesian)
+    
+    epot = ham.potential.energy(q)
+    #print(epot)
+    #print(t)
+    
+    epot_plot = epot[::nskip]
+    
+    plt.close()
+    fig, ax = plt.subplots(Nrow, Ncol, figsize=(Ncol*da, Nrow*da), sharex=True, sharey=True)
+    
+    for i in range(Nsnap):
+        irow = i//Ncol
+        icol = i%Ncol
+        plt.sca(ax[irow, icol])
+        c = coord.Galactocentric(x=(f[snaps[i]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[i]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[i]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[i]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[i]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[i]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+        
+        w0_ = gd.PhaseSpacePosition(c.cartesian)
+        orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+        etot = orbit_.energy()[0,:]
+        lz = orbit_.angular_momentum()[2,0,:]
+        
+        plt.plot(lz, etot, 'ko', mew=0, ms=0.5, alpha=0.1)
+        plt.axhline(epot_plot[i].value, color='r', alpha=0.4)
+        
+        t = T + dt*nskip*i
+        plt.text(0.9,0.9,'{:.2f} Gyr'.format(t.to(u.Gyr).value), transform=plt.gca().transAxes, ha='right', va='top', fontsize='small')
+        
+        if irow==Nrow-1:
+            plt.xlabel('$L_z$ kpc$^2$ Myr$^{-1}$')
+        
+        if icol==0:
+            plt.ylabel('$E_{tot}$ kpc$^2$ Myr$^{-2}$')
+    
+    plt.xlim(-6,1.5)
+    plt.ylim(-0.185,-0.06)
+    plt.tight_layout(h_pad=0, w_pad=0)
+    
+    #plt.savefig('../plots/elz_evolution.png')
+
+def pot(R):
+    return ham.potential.energy([R, 0, 0]*u.kpc).value[0]
+
+pot_vec = np.vectorize(pot)
+
+def Lcirc(Etot, R):
+    return -R*((2*(Etot - pot_vec(R)))**0.5) 
+
+def maxLcirc(Etot):
+    optfunc = partial(Lcirc,Etot)
+    res = minimize(optfunc, np.array([0.1]), method='BFGS')
+    return np.abs(res.fun)
+
+
+def ehist_evolution(verbose=False):
+    """Plot energy histogram in individual snapshots"""
+    
+    fname = '../data/snaps_interact0_d.27.0_m.1.40.16.00_a.1.0.5.0_ndisk_N.010000.h5'
+    #fname = '../data/snaps_interact0_d.27.0_m.1.40.16.00_a.1.0.5.0_ndisk_N.100000.h5'
+    fname = '../data/snaps_interact1_d.26.6_m.0.05.0.21_a.0.5.10.0_ndisk_N.100000.h5'
+    fname = '../data/snaps_interact1_lmc_d.27.0_m.25.00.0.00_a.5.0.1.0_ndisk_N.100000.h5'
+    fname = '../data/snaps_interact1_lmc_d.27.0_m.8.00.0.00_a.5.0.1.0_ndisk_N.100000.h5'
+    f = h5py.File(fname, 'r')
+    snaps = list(f.keys())
+    
+    Nsnap = len(snaps)
+    Nrow = int(Nsnap // np.sqrt(Nsnap))
+    Ncol = int(np.ceil(Nsnap/Nrow))
+    
+    if verbose: print(Nsnap, Nrow, Ncol)
+    da = 3.5
+    
+    T = -6490.5*u.Myr
+    T = -2977.5*u.Myr
+    dt = 0.5*u.Myr
+    nskip = 200
+    
+    #pkl = pickle.load(open('../data/sgr_orbit_interact0_d.27.0_m.1.40.16.00_a.1.0.5.0_ndisk_N.010000.pkl', 'rb'))
+    pkl = pickle.load(open('../data/sgr_orbit_interact1_d.26.6_m.0.05.0.21_a.0.5.10.0_ndisk_N.100000.pkl', 'rb'))
+    pkl = pickle.load(open('../data/sgr_orbit_interact1_lmc_d.27.0_m.8.00.0.00_a.5.0.1.0_ndisk_N.100000.pkl', 'rb'))
+    
+    c = pkl['c'][::-1]
+    t = pkl['t'][::-1]
+    q = gd.PhaseSpacePosition(c.cartesian)
+    
+    epot = ham.potential.energy(q)
+    #print(epot)
+    #print(t)
+    
+    epot_plot = epot[::nskip]
+    ebins = np.linspace(-0.18,-0.08,100)
+    eridge = np.array([-0.145, -0.134, -0.127, -0.122, -0.116])
+    
+    # read in H3 data
+    th = Table.read('../data/rcat_giants.fits')
+    ind = (th['SNR']>3)
+    th = th[ind]
+    
+    ind_disk = (th['Lz']<0) & (th['circLz_pot1']>0.35) & (th['circLz_pot1']<0.7)
+    #ind_disk = (th['Lz']<0) & (th['circLz_pot1']<0.7)
+
+    plt.close()
+    fig, ax = plt.subplots(Nrow, Ncol, figsize=(Ncol*da, Nrow*da), sharex=True, sharey=True)
+    
+    for i in range(Nsnap):
+        irow = i//Ncol
+        icol = i%Ncol
+        plt.sca(ax[irow, icol])
+        c = coord.Galactocentric(x=(f[snaps[i]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[i]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[i]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[i]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[i]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[i]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+        
+        w0_ = gd.PhaseSpacePosition(c.cartesian)
+        orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+        etot = orbit_.energy()[0,:]
+        lz = orbit_.angular_momentum()[2,0,:]
+        
+        ## calculate circularity
+        #maxLcirc_vec = np.vectorize(maxLcirc)
+        #maxLcirc_arr = maxLcirc_vec(np.linspace(-0.2, -0.02, 1000))
+        
+        #lmax = (np.interp(etot.value, np.linspace(-0.2, 0.02, 1000), maxLcirc_arr))
+        #circLz = np.abs(lz.value/lmax)
+        
+        #ind = circLz>0.35
+        
+        plt.hist(etot.value, bins=ebins, color='k', alpha=0.8, histtype='step', density=True)
+        #plt.hist(th['E_tot_pot2'][ind_disk], color='orange', bins=ebins, density=True, histtype='stepfilled', alpha=0.3, label='H3 disk (0.3<circ<0.7)')
+        
+        plt.axvline(epot_plot[i].value, color='r', alpha=0.4)
+        
+        for e in eridge:
+            plt.axvline(e, ls=':', color='k', alpha=0.5, lw=0.5)
+        
+        t = T + dt*nskip*i
+        plt.text(0.9,0.9,'{:.2f} Gyr'.format(t.to(u.Gyr).value), transform=plt.gca().transAxes, ha='right', va='top', fontsize='small')
+        
+        if irow==Nrow-1:
+            plt.xlabel('$E_{tot}$ kpc$^2$ Myr$^{-2}$')
+        
+        if icol==0:
+            plt.ylabel('Density')
+    
+    #plt.xlim(-6,1.5)
+    #plt.xlim(-0.185,-0.06)
+    plt.xlim(-0.15,-0.095)
+    plt.tight_layout(h_pad=0, w_pad=0)
+    
+    #plt.savefig('../plots/ehist_evolution.png')
+
+
 def visualize_lz_change():
     """"""
     
@@ -2776,6 +3253,7 @@ def elz_tip():
     
     plt.tight_layout()
 
+
 # Spatial dependence
 
 def elz_sides():
@@ -2869,6 +3347,247 @@ def elz_sides():
     
     plt.tight_layout()
     plt.savefig('../plots/elz_xyz_{:s}.png'.format(root))
+
+def localization():
+    """Check if ripples are localized at early times"""
+    
+    fname = '../data/snaps_interact0_lmc_d.27.0_m.25.00.1.00_a.5.0.1.0_ndisk_N.100000.h5'
+    f = h5py.File(fname, 'r')
+    snaps = list(f.keys())
+    Nsnap = len(snaps)
+    
+    ncol = 5
+    psnaps = np.linspace(0, Nsnap-1, ncol, dtype=int)
+    #psnaps = np.arange(ncol, dtype=int)
+    #print(psnaps)
+    
+    i = psnaps[1]
+    c = coord.Galactocentric(x=(f[snaps[i]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[i]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[i]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[i]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[i]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[i]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+        
+    w0_ = gd.PhaseSpacePosition(c.cartesian)
+    orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+    etot = orbit_.energy()[0,:]
+    lz = orbit_.angular_momentum()[2,0,:]
+    
+    psnaps = [0,2,4,6,9]
+    
+    ind = (etot>-0.144*u.kpc**2*u.Myr**-2) & (etot<-0.14*u.kpc**2*u.Myr**-2) & (lz>-1.4*u.kpc**2*u.Myr**-1)
+    ind2 = (etot>-0.135*u.kpc**2*u.Myr**-2) & (etot<-0.13*u.kpc**2*u.Myr**-2) & (lz>-1.6*u.kpc**2*u.Myr**-1)
+    ind3 = (etot>-0.127*u.kpc**2*u.Myr**-2) & (etot<-0.121*u.kpc**2*u.Myr**-2) & (lz>-1.9*u.kpc**2*u.Myr**-1)
+    
+    da = 2
+    fwidth = ncol*da
+    fheight = 2*da
+    
+    ms = 1
+    
+    plt.close()
+    fig, ax = plt.subplots(2,ncol,figsize=(fwidth, fheight), sharex='row', sharey='row')
+    
+    for i in range(ncol):
+        j = psnaps[i]
+        c = coord.Galactocentric(x=(f[snaps[j]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[j]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[j]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[j]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[j]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[j]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+        
+        w0_ = gd.PhaseSpacePosition(c.cartesian)
+        orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+        etot = orbit_.energy()[0,:]
+        lz = orbit_.angular_momentum()[2,0,:]
+        
+        #ind = (etot>-0.146*u.kpc**2*u.Myr**-2) & (etot<-0.141*u.kpc**2*u.Myr**-2) & (lz>-1.3*u.kpc**2*u.Myr**-1)
+        
+        plt.sca(ax[0][i])
+        plt.plot(c.x, c.y, 'ko', mew=0, ms=0.5, alpha=0.1)
+        #if i==ncol-1:
+        plt.plot(c.x[ind], c.y[ind], 'ro', mew=0, ms=ms, alpha=1)
+        plt.plot(c.x[ind2], c.y[ind2], 'bo', mew=0, ms=ms, alpha=1)
+        plt.plot(c.x[ind3], c.y[ind3], 'go', mew=0, ms=ms, alpha=1)
+        
+        plt.sca(ax[1][i])
+        plt.plot(lz, etot, 'ko', mew=0, ms=0.5, alpha=0.1)
+        #if i==ncol-1:
+        plt.plot(lz[ind], etot[ind], 'ro', mew=0, ms=ms, alpha=1)
+        plt.plot(lz[ind2], etot[ind2], 'bo', mew=0, ms=ms, alpha=1)
+        plt.plot(lz[ind3], etot[ind3], 'go', mew=0, ms=ms, alpha=1)
+    
+    plt.sca(ax[0][0])
+    plt.xlim(-20,20)
+    plt.ylim(-20,20)
+    
+    plt.sca(ax[1][0])
+    plt.xlim(-6,1.5)
+    plt.ylim(-0.185,-0.06)
+    
+    plt.tight_layout(h_pad=0, w_pad=0)
+
+def init_r():
+    """Plot where stars end up depending on their initial distance from the galactic center"""
+    
+    fname = '../data/snaps_interact0_lmc_d.27.0_m.25.00.1.00_a.5.0.1.0_ndisk_N.100000.h5'
+    #fname = '../data/snaps_interact1_d.26.6_m.0.05.0.21_a.0.5.10.0_ndisk_N.100000.h5'
+    #fname = '../data/snaps_interact0_d.26.6_m.1.40.16.00_a.1.0.5.0_ndisk_N.100000.h5'
+
+    f = h5py.File(fname, 'r')
+    snaps = list(f.keys())
+    Nsnap = len(snaps)
+    
+    ncol = 5
+    psnaps = np.linspace(0, Nsnap-1, ncol, dtype=int)
+    #psnaps = np.arange(ncol, dtype=int)
+    #print(psnaps)
+    
+    i = 0
+    c = coord.Galactocentric(x=(f[snaps[i]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[i]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[i]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[i]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[i]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[i]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+    
+    r = c.spherical.distance.value
+    
+    #w0_ = gd.PhaseSpacePosition(c.cartesian)
+    #orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+    #etot = orbit_.energy()[0,:]
+    #lz = orbit_.angular_momentum()[2,0,:]
+    
+    #psnaps = [0,2,4,6,9]
+    
+    #ind = (etot>-0.144*u.kpc**2*u.Myr**-2) & (etot<-0.14*u.kpc**2*u.Myr**-2) & (lz>-1.4*u.kpc**2*u.Myr**-1)
+    #ind2 = (etot>-0.135*u.kpc**2*u.Myr**-2) & (etot<-0.13*u.kpc**2*u.Myr**-2) & (lz>-1.6*u.kpc**2*u.Myr**-1)
+    #ind3 = (etot>-0.127*u.kpc**2*u.Myr**-2) & (etot<-0.121*u.kpc**2*u.Myr**-2) & (lz>-1.9*u.kpc**2*u.Myr**-1)
+    
+    da = 2.5
+    fwidth = ncol*da
+    fheight = 2.3*da
+    
+    s = 0.5
+    alpha = 0.1
+    vmin = 0
+    vmax = 20
+    
+    plt.close()
+    fig, ax = plt.subplots(2,ncol,figsize=(fwidth, fheight), sharex='row', sharey='row')
+    
+    for i in range(ncol):
+        j = psnaps[i]
+        c = coord.Galactocentric(x=(f[snaps[j]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[j]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[j]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[j]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[j]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[j]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+        
+        w0_ = gd.PhaseSpacePosition(c.cartesian)
+        orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+        etot = orbit_.energy()[0,:]
+        lz = orbit_.angular_momentum()[2,0,:]
+        
+        r = c.spherical.distance.value
+        
+        #ind = (etot>-0.146*u.kpc**2*u.Myr**-2) & (etot<-0.141*u.kpc**2*u.Myr**-2) & (lz>-1.3*u.kpc**2*u.Myr**-1)
+        
+        plt.sca(ax[0][i])
+        plt.scatter(c.x, c.y, c=r, s=s, vmin=vmin, vmax=vmax, alpha=alpha)
+        ##if i==ncol-1:
+        #plt.plot(c.x[ind], c.y[ind], 'ro', mew=0, ms=ms, alpha=1)
+        #plt.plot(c.x[ind2], c.y[ind2], 'bo', mew=0, ms=ms, alpha=1)
+        #plt.plot(c.x[ind3], c.y[ind3], 'go', mew=0, ms=ms, alpha=1)
+        
+        plt.xlabel('X [kpc]')
+        
+        plt.sca(ax[1][i])
+        plt.scatter(lz, etot, c=r, s=s, vmin=vmin, vmax=vmax, alpha=alpha)
+        ##if i==ncol-1:
+        #plt.plot(lz[ind], etot[ind], 'ro', mew=0, ms=ms, alpha=1)
+        #plt.plot(lz[ind2], etot[ind2], 'bo', mew=0, ms=ms, alpha=1)
+        #plt.plot(lz[ind3], etot[ind3], 'go', mew=0, ms=ms, alpha=1)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    plt.sca(ax[0][0])
+    plt.xlim(-20,20)
+    plt.ylim(-20,20)
+    plt.ylabel('Y [kpc]')
+    
+    plt.sca(ax[1][0])
+    plt.xlim(-6,1.5)
+    plt.ylim(-0.185,-0.06)
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout(h_pad=0, w_pad=0)
+
+def init_phi():
+    """Plot where stars end up depending on their initial distance from the galactic center"""
+    
+    fname = '../data/snaps_interact0_lmc_d.27.0_m.25.00.1.00_a.5.0.1.0_ndisk_N.100000.h5'
+    #fname = '../data/snaps_interact1_d.26.6_m.0.05.0.21_a.0.5.10.0_ndisk_N.100000.h5'
+    #fname = '../data/snaps_interact0_d.26.6_m.1.40.16.00_a.1.0.5.0_ndisk_N.100000.h5'
+
+    f = h5py.File(fname, 'r')
+    snaps = list(f.keys())
+    Nsnap = len(snaps)
+    
+    ncol = 5
+    psnaps = np.linspace(0, Nsnap-1, ncol, dtype=int)
+    #psnaps = np.arange(ncol, dtype=int)
+    #print(psnaps)
+    
+    i = 0
+    c = coord.Galactocentric(x=(f[snaps[i]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[i]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[i]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[i]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[i]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[i]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+    
+    phi = c.spherical.lon.deg
+    
+    #w0_ = gd.PhaseSpacePosition(c.cartesian)
+    #orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+    #etot = orbit_.energy()[0,:]
+    #lz = orbit_.angular_momentum()[2,0,:]
+    
+    #psnaps = [0,2,4,6,9]
+    
+    #ind = (etot>-0.144*u.kpc**2*u.Myr**-2) & (etot<-0.14*u.kpc**2*u.Myr**-2) & (lz>-1.4*u.kpc**2*u.Myr**-1)
+    #ind2 = (etot>-0.135*u.kpc**2*u.Myr**-2) & (etot<-0.13*u.kpc**2*u.Myr**-2) & (lz>-1.6*u.kpc**2*u.Myr**-1)
+    #ind3 = (etot>-0.127*u.kpc**2*u.Myr**-2) & (etot<-0.121*u.kpc**2*u.Myr**-2) & (lz>-1.9*u.kpc**2*u.Myr**-1)
+    
+    da = 2.5
+    fwidth = ncol*da
+    fheight = 2.3*da
+    
+    s = 0.2
+    alpha = 0.1
+    vmin = 0
+    vmax = 360
+    
+    plt.close()
+    fig, ax = plt.subplots(2,ncol,figsize=(fwidth, fheight), sharex='row', sharey='row')
+    
+    for i in range(ncol):
+        j = psnaps[i]
+        c = coord.Galactocentric(x=(f[snaps[j]]['x'][:]*u.m).to(u.kpc), y=(f[snaps[j]]['y'][:]*u.m).to(u.kpc), z=(f[snaps[j]]['z'][:]*u.m).to(u.kpc), v_x=(f[snaps[j]]['vx'][:]*u.m/u.s).to(u.km/u.s), v_y=(f[snaps[j]]['vy'][:]*u.m/u.s).to(u.km/u.s), v_z=(f[snaps[j]]['vz'][:]*u.m/u.s).to(u.km/u.s))
+        
+        w0_ = gd.PhaseSpacePosition(c.cartesian)
+        orbit_ = ham.integrate_orbit(w0_, dt=0.1*u.Myr, n_steps=2)
+        etot = orbit_.energy()[0,:]
+        lz = orbit_.angular_momentum()[2,0,:]
+        
+        #ind = (etot>-0.146*u.kpc**2*u.Myr**-2) & (etot<-0.141*u.kpc**2*u.Myr**-2) & (lz>-1.3*u.kpc**2*u.Myr**-1)
+        
+        plt.sca(ax[0][i])
+        plt.scatter(c.x, c.y, c=phi, s=s, vmin=vmin, vmax=vmax, alpha=alpha)
+        ##if i==ncol-1:
+        #plt.plot(c.x[ind], c.y[ind], 'ro', mew=0, ms=ms, alpha=1)
+        #plt.plot(c.x[ind2], c.y[ind2], 'bo', mew=0, ms=ms, alpha=1)
+        #plt.plot(c.x[ind3], c.y[ind3], 'go', mew=0, ms=ms, alpha=1)
+        
+        plt.xlabel('X [kpc]')
+        
+        plt.sca(ax[1][i])
+        plt.scatter(lz, etot, c=phi, s=s, vmin=vmin, vmax=vmax, alpha=alpha)
+        ##if i==ncol-1:
+        #plt.plot(lz[ind], etot[ind], 'ro', mew=0, ms=ms, alpha=1)
+        #plt.plot(lz[ind2], etot[ind2], 'bo', mew=0, ms=ms, alpha=1)
+        #plt.plot(lz[ind3], etot[ind3], 'go', mew=0, ms=ms, alpha=1)
+        plt.xlabel('$L_z$ [kpc$^2$ Myr$^{-1}$]')
+    
+    plt.sca(ax[0][0])
+    plt.xlim(-20,20)
+    plt.ylim(-20,20)
+    plt.ylabel('Y [kpc]')
+    
+    plt.sca(ax[1][0])
+    plt.xlim(-6,1.5)
+    plt.ylim(-0.185,-0.06)
+    plt.ylabel('$E_{tot}$ [kpc$^2$ Myr$^{-2}$]')
+    
+    plt.tight_layout(h_pad=0, w_pad=0)
 
 
 
